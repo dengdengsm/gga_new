@@ -1,0 +1,6 @@
+[
+  {
+    "q": "Expecting arrow type, got 'NEWLINE'",
+    "a": "Ensure that each line in a sequence diagram ends with a valid arrow type and does not have unexpected newlines or incomplete statements."
+  }
+]

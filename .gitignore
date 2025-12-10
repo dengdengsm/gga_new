@@ -1,0 +1,85 @@
+# ==========================
+# 操作系统 & 通用文件
+# ==========================
+# Mac 系统文件
+.DS_Store
+
+# Windows 系统文件
+Thumbs.db
+ehthumbs.db
+
+# 日志文件
+*.log
+
+# ==========================
+# IDE & 编辑器配置 (以 . 开头的文件夹)
+# ==========================
+# 忽略 VSCode, JetBrains (Pycharm/WebStorm) 等 IDE 的配置文件夹
+.vscode/
+.idea/
+.settings/
+*.sublime-workspace
+.local_graph_db/
+.local_rag_db/
+.uploaded_docs/
+.uploaded_images/
+
+# ==========================
+# Python (后端)
+# ==========================
+# 编译文件和缓存 (您特别提到的)
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 虚拟环境 (Virtual Environments)
+# 涵盖常见的虚拟环境命名习惯
+venv/
+.venv/
+env/
+.env_folder/
+mermaid_code/
+
+# 环境变量 (非常重要，防止密钥泄露)
+.env
+.env.local
+.env.*.local
+
+# 分发与构建
+dist/
+build/
+*.egg-info/
+
+# Pytest / Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ==========================
+# Node.js / 前端
+# ==========================
+# 依赖包 (您提到的 node 啥的)
+node_modules/
+
+# 构建输出 (前端打包后的文件通常不需要上传)
+dist/
+build/
+out/
+.output/
+
+# 框架特定缓存
+.next/
+.nuxt/
+.cache/
+
+# NPM / Yarn / Pnpm 日志
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ==========================
+# 特殊说明
+# ==========================
+# 如果您不想忽略 package-lock.json 或 yarn.lock，请确保它们不在上方列表中。
+# 通常建议提交 lock 文件以锁定版本。

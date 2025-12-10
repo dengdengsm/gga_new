@@ -1,0 +1,66 @@
+[
+  {
+    "q": "No diagram type detected matching given configuration",
+    "a": "Ensure the diagram type is explicitly specified at the start of the code, such as 'graph TD' for Mermaid syntax."
+  },
+  {
+    "q": "Parse error: Expecting 'SEMI', 'NEWLINE', 'EOF', 'AMP', 'START_LINK', 'LINK', 'LINK_ID', got 'NODE_STRING'",
+    "a": "Use double hyphens for link lines in Mermaid syntax, not single hyphens."
+  },
+  {
+    "q": "No diagram type detected matching given configuration for text",
+    "a": "Ensure the diagram type is explicitly specified at the start of the diagram code, such as 'graph TD' for Mermaid diagrams."
+  },
+  {
+    "q": "Parse error on subgraph ID with special characters",
+    "a": "Use underscores and quotes for subgraph IDs containing hyphens, parentheses, or other special characters"
+  },
+  {
+    "q": "No diagram type detected",
+    "a": "Always specify a diagram type at the beginning of the code, such as 'graph TD' for Mermaid diagrams, to avoid syntax errors."
+  },
+  {
+    "q": "Syntax error in graph due to unquoted special characters in node labels",
+    "a": "Always enclose node labels containing special characters, such as emojis or symbols, in double quotes to prevent parsing errors."
+  },
+  {
+    "q": "Syntax error in graph due to spaces in node labels",
+    "a": "Enclose node labels containing spaces or special characters in quotes to ensure proper parsing."
+  },
+  {
+    "q": "Syntax error in graph",
+    "a": "Ensure proper spacing and formatting in Mermaid diagram syntax, avoiding incorrect indentation or line breaks in commands."
+  },
+  {
+    "q": "Parse error on line expecting specific tokens, got 'PS'",
+    "a": "Avoid using parentheses or special characters in node IDs or labels; use underscores or camelCase instead."
+  },
+  {
+    "q": "Invalid date format with 'h' suffix",
+    "a": "Do not use time unit suffixes in date values when dateFormat is set to numeric-only formats like 'X'."
+  },
+  {
+    "q": "SSL: UNEXPECTED_EOF_WHILE_READING",
+    "a": "Ensure network requests use proper SSL/TLS configurations and handle connection errors gracefully."
+  },
+  {
+    "q": "Parse error: Expecting 'AMP', 'COLON', 'DOWN', 'DEFAULT', 'NUM', 'COMMA', 'NODE_STRING', 'BRKT', 'MINUS', 'MULT', 'UNICODE_TEXT', got 'subgraph'",
+    "a": "Ensure subgraph labels are enclosed in quotes to avoid syntax conflicts with reserved keywords or special characters."
+  },
+  {
+    "q": "Parse error expecting specific tokens but got 'GRAPH'",
+    "a": "Ensure proper syntax and avoid unexpected keywords or formatting in graph definitions."
+  },
+  {
+    "q": "Parse error expecting 'SEMI', 'NEWLINE', 'EOF', 'AMP', 'START_LINK', 'LINK', 'LINK_ID', got 'NODE_STRING'",
+    "a": "Ensure proper syntax and delimiters are used to separate elements in graph definitions."
+  },
+  {
+    "q": "Parse error on line 43: Expecting specific tokens, got 'PS'",
+    "a": "Ensure that all syntax elements in the graph definition are valid and correctly formatted according to the diagram language specifications."
+  },
+  {
+    "q": "Read timed out",
+    "a": "Increase the timeout setting for network requests to handle slow or unresponsive servers."
+  }
+]
