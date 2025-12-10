@@ -45,6 +45,17 @@ class Agent(abc_agent):
         self.model_name = model_name
         self.temperature = temperature
 
+    def update_config(self, api_key: str, base_url: str, model_name: Optional[str] = None):
+        """
+        【热更新】运行时修改 Agent 的配置
+        """
+        if api_key and base_url:
+            # print(f"🔄 [Agent] 正在热更新 LLM 配置... (Target: {base_url})")
+            self.client = OpenAI(api_key=api_key, base_url=base_url)
+        
+        if model_name:
+            self.model_name = model_name
+
     def _prepare_messages(self, messages: List[Message], system_prompt: Optional[str]) -> List[Message]:
         """内部工具：处理 System Prompt"""
         if system_prompt:
@@ -87,8 +98,14 @@ class Agent(abc_agent):
         except Exception as e:
             yield f"Error in stream: {str(e)}"
 
+# --- 默认开发配置 (可被热更新覆盖) ---
 API_KEY_deepseek = "sk-53ad620095534cae927007367eecf082" 
 BASE_URL_deepseek = "https://api.deepseek.com"
+
 class deepseek_agent(Agent):
-    def __init__(self,model_name):
-        super().__init__(API_KEY_deepseek,BASE_URL_deepseek,model_name,0.0)
+    def __init__(self, model_name, api_key=None, base_url=None):
+        # 优先使用传入的配置，否则回退到默认常量
+        final_key = api_key if api_key else API_KEY_deepseek
+        final_url = base_url if base_url else BASE_URL_deepseek
+        
+        super().__init__(final_key, final_url, model_name, 0.0)

@@ -2,16 +2,14 @@
 
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
-import { FileCode2, Github, Settings, Plus } from "lucide-react";
+import { FileCode2, Github, Settings } from "lucide-react";
 
 export function Header({ 
-  remainingUsage = 0, 
-  usageLimit = parseInt(process.env.NEXT_PUBLIC_DAILY_USAGE_LIMIT || "5"), 
   onSettingsClick, 
-  onContactClick,
   isPasswordVerified = false,
   hasCustomConfig = false 
 }) {
+  // 仅保留状态标记（可选），移除了具体的数字统计
   const hasUnlimitedAccess = isPasswordVerified || hasCustomConfig;
 
   return (
@@ -25,23 +23,12 @@ export function Header({
         </div>
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            {hasUnlimitedAccess ? (
+            {/* 如果需要显示"已解锁"状态可以保留，不需要可直接删除此代码块 */}
+            {hasUnlimitedAccess && (
               <span className="text-green-600 font-semibold">无限量</span>
-            ) : (
-              <>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={onContactClick}
-                  title="联系作者获取更多使用次数"
-                  className="h-6 w-6 p-0 text-muted-foreground hover:text-primary"
-                >
-                  <Plus className="h-4 w-4" />
-                </Button>
-                剩余: <span className={remainingUsage <= 1 ? "text-red-500 font-bold" : "text-green-600 font-semibold"}>{remainingUsage}</span>/{usageLimit}
-              </>
             )}
           </div>
+          
           <Button 
             variant="ghost" 
             size="icon" 
@@ -50,8 +37,10 @@ export function Header({
           >
             <Settings className="h-5 w-5" />
           </Button>
+          
+          {/* 请修改下方的 href 为您自己的 GitHub 仓库地址 */}
           <a 
-            href="https://github.com/liujuntao123/smart-mermaid"
+            href="https://github.com/dengdengsm/gga_new.git"
             target="_blank"
             rel="noopener noreferrer"
             className="hover:opacity-80"
@@ -63,4 +52,4 @@ export function Header({
       </div>
     </header>
   );
-} 
+}

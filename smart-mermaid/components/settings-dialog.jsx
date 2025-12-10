@@ -33,6 +33,7 @@ export function SettingsDialog({ open, onOpenChange, onPasswordVerified, onConfi
   const [passwordVerified, setPasswordVerified] = useState(false);
   const [enteredPassword, setEnteredPassword] = useState("");
   const [isVerifying, setIsVerifying] = useState(false);
+  const [isSaving, setIsSaving] = useState(false); // 新增保存加载状态
 
   // 从localStorage加载配置
   useEffect(() => {
@@ -98,7 +99,8 @@ export function SettingsDialog({ open, onOpenChange, onPasswordVerified, onConfi
     }
   };
 
-  const handleSaveAIConfig = () => {
+  // --- 核心修改：保存配置并同步到后端 ---
+  const handleSaveAIConfig = async () => {
     const config = {
       apiUrl: apiUrl.trim(),
       apiKey: apiKey.trim(),
@@ -111,12 +113,43 @@ export function SettingsDialog({ open, onOpenChange, onPasswordVerified, onConfi
       return;
     }
     
-    localStorage.setItem('aiConfig', JSON.stringify(config));
-    toast.success("AI配置已保存");
-    
-    // 通知父组件配置已更新
-    if (onConfigUpdated) {
-      onConfigUpdated();
+    setIsSaving(true);
+
+    try {
+      // 1. 保存到本地 (持久化)
+      localStorage.setItem('aiConfig', JSON.stringify(config));
+      
+      // 2. 热更新后端 (实时生效)
+      // 注意：这里假设后端运行在 localhost:8000，生产环境可能需要换成环境变量
+      const response = await fetch("http://localhost:8000/api/system/config", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(config),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.status === "success") {
+           toast.success("配置已保存并同步至后端引擎");
+        } else {
+           toast.warning(`本地保存成功，但后端同步异常: ${data.message}`);
+        }
+      } else {
+        toast.warning("本地保存成功，但无法连接后端服务进行热更新");
+      }
+
+      // 通知父组件配置已更新
+      if (onConfigUpdated) {
+        onConfigUpdated();
+      }
+
+    } catch (error) {
+      console.error("Save config error:", error);
+      toast.warning("本地保存成功，但网络请求失败");
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -129,7 +162,7 @@ export function SettingsDialog({ open, onOpenChange, onPasswordVerified, onConfi
     setApiKey("");
     setModelName("");
     
-    toast.success("AI配置已重置");
+    toast.success("AI配置已重置 (请自行清除后端状态)");
     
     // 通知父组件配置已更新
     if (onConfigUpdated) {
@@ -164,21 +197,21 @@ export function SettingsDialog({ open, onOpenChange, onPasswordVerified, onConfi
             配置系统访问权限和AI服务参数
             <div className="mt-2 p-2 bg-blue-50 rounded-md border-l-4 border-blue-400">
               <p className="text-sm text-blue-700">
-                💡 解锁无限使用：①输入访问密码 或 ②配置您的AI服务。同时配置时优先使用AI服务。
+                💡 解锁无限使用：配置您的AI服务即可享有无限使用权限。
               </p>
             </div>
           </DialogDescription>
         </DialogHeader>
 
-        <Tabs defaultValue="password" className="w-full">
+        <Tabs defaultValue="ai-config" className="w-full">
           <TabsList className="grid w-full grid-cols-2">
+             <TabsTrigger value="ai-config" className="flex items-center gap-2">
+              <Bot className="h-4 w-4" />
+              AI配置
+            </TabsTrigger>
             <TabsTrigger value="password" className="flex items-center gap-2">
               <Key className="h-4 w-4" />
               访问密码
-            </TabsTrigger>
-            <TabsTrigger value="ai-config" className="flex items-center gap-2">
-              <Bot className="h-4 w-4" />
-              AI配置
             </TabsTrigger>
           </TabsList>
 
@@ -254,7 +287,7 @@ export function SettingsDialog({ open, onOpenChange, onPasswordVerified, onConfi
             <Card>
               <CardHeader>
                 <CardTitle className="text-lg">AI服务配置</CardTitle>
-                <p className="text-sm text-muted-foreground">配置您自己的AI服务，保存后即可享有无限使用权限</p>
+                <p className="text-sm text-muted-foreground">配置您自己的AI服务，保存后系统将即时切换至新模型</p>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
@@ -303,9 +336,18 @@ export function SettingsDialog({ open, onOpenChange, onPasswordVerified, onConfi
                 </div>
 
                 <div className="flex gap-2">
-                  <Button onClick={handleSaveAIConfig} className="flex-1">
-                    <Save className="h-4 w-4 mr-2" />
-                    保存配置
+                  <Button onClick={handleSaveAIConfig} className="flex-1" disabled={isSaving}>
+                    {isSaving ? (
+                        <>
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-background mr-2"></div>
+                          同步中...
+                        </>
+                    ) : (
+                        <>
+                            <Save className="h-4 w-4 mr-2" />
+                            保存配置
+                        </>
+                    )}
                   </Button>
                   
                   {hasAIConfig && (
@@ -321,7 +363,7 @@ export function SettingsDialog({ open, onOpenChange, onPasswordVerified, onConfi
                 
                 {hasAIConfig && (
                   <p className="text-xs text-muted-foreground">
-                    点击重置按钮将清除所有AI配置，恢复使用默认服务
+                    点击重置按钮将清除本地配置，请手动重启后端以恢复默认。
                   </p>
                 )}
               </CardContent>
@@ -331,4 +373,4 @@ export function SettingsDialog({ open, onOpenChange, onPasswordVerified, onConfi
       </DialogContent>
     </Dialog>
   );
-} 
+}

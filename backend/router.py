@@ -192,6 +192,20 @@ class RouterAgent:
         
         with open(self.experience_file, 'w', encoding='utf-8') as f:
             json.dump(current_data, f, ensure_ascii=False, indent=2)
+    def reload_llm_config(self, config: dict):
+        """
+        【热更新】接收前端配置(驼峰命名)并更新底层 LLM
+        """
+        # 从字典中提取配置
+        api_key = config.get("apiKey")
+        api_url = config.get("apiUrl")
+        model_name = config.get("modelName")
+        
+        # 调用底层 Agent.py 中定义的 update_config
+        # 这里的 self.llm 对应 Agent/deepseek_agent 实例
+        if hasattr(self, 'llm'):
+            self.llm.update_config(api_key=api_key, base_url=api_url, model_name=model_name)
+            print(f"🔄 [{self.__class__.__name__}] LLM配置已重载 -> 模型: {model_name}")
 
 # --- 单元测试 ---
 if __name__ == "__main__":

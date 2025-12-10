@@ -7,7 +7,6 @@ from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 
 # --- 引入你的核心模块 ---
-# 确保这些文件都在同一目录下
 from router import RouterAgent
 from graphrag import LightGraphRAG
 from codez_gen import CodeGenAgent
@@ -17,7 +16,7 @@ from utils import quick_validate_mermaid
 # --- 初始化 FastAPI ---
 app = FastAPI(title="Smart Mermaid Backend (Sync Version)")
 
-# 允许跨域 (解决前端直连端口的问题)
+# 允许跨域
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -26,19 +25,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- 1. 初始化 Agents ---
+# --- 1. 初始化 Agents (全局单例) ---
 print("🚀 [Backend] 正在启动后端引擎，加载 Agents...")
 
-# 确保必要的目录存在
 os.makedirs("./.local_graph_db", exist_ok=True)
 os.makedirs("./.uploaded_docs", exist_ok=True)
 
 # 初始化核心对象
 try:
-    # 知识图谱引擎
     rag_engine = LightGraphRAG(persist_dir="./.local_graph_db")
     
-    # 路由智能体 (开启学习模式)
+    # 路由智能体
     router_agent = RouterAgent(model_name="deepseek-chat", learn_mode=True)
     
     # 代码生成智能体
@@ -52,58 +49,75 @@ try:
     print("✅ [Backend] 引擎加载完毕！")
 except Exception as e:
     print(f"❌ [Backend] 引擎加载失败: {e}")
-    # 不中断程序，防止因为没key直接崩掉，但实际调用会报错
 
 # --- 2. 定义请求体结构 ---
 
 class GenerateRequest(BaseModel):
     text: str
     diagramType: str = "auto"
-    # 接收前端传来的其他配置参数 (虽然这里主要用 text)
+    # 保留字段定义以防前端报错，但实际上我们现在依赖全局配置
     aiConfig: Optional[Dict[str, Any]] = None
-    accessPassword: Optional[str] = None
-    selectedModel: Optional[str] = None
 
 class FixRequest(BaseModel):
     mermaidCode: str
     errorMessage: str
-    aiConfig: Optional[Dict[str, Any]] = None
 
 class PasswordRequest(BaseModel):
     password: str
 
+# 新增：配置更新请求体
+class ConfigUpdateRequest(BaseModel):
+    apiKey: str
+    apiUrl: str
+    modelName: str
+
 # --- 3. 业务接口定义 ---
 
-# === 接口 A: 文件上传 (构建图谱) ===
+# === 接口 X (新增): 系统配置热更新 ===
+@app.post("/api/system/config")
+async def update_system_config(config: ConfigUpdateRequest):
+    """
+    接收前端的 AI 配置，热更新所有 Agent 的底层 LLM
+    """
+    print(f"🔄 [System] 收到配置更新请求: {config.modelName} @ {config.apiUrl}")
+    
+    try:
+        # 将 Pydantic 对象转为字典
+        config_dict = config.dict()
+        
+        # 依次通知所有 Agent 更新
+        # 注意：这里调用的是我们在 step 3,4,5 中新增的 reload_llm_config 方法
+        if 'router_agent' in globals():
+            router_agent.reload_llm_config(config_dict)
+            
+        if 'code_gen_agent' in globals():
+            code_gen_agent.reload_llm_config(config_dict)
+            
+        if 'code_revise_agent' in globals():
+            code_revise_agent.reload_llm_config(config_dict)
+            
+        return {"status": "success", "message": "AI配置已热更新"}
+    except Exception as e:
+        print(f"❌ [System] 配置更新失败: {e}")
+        return {"status": "error", "message": str(e)}
+
+# === 接口 A: 文件上传 ===
 @app.post("/api/upload")
 async def upload_file(file: UploadFile = File(...)):
-    """
-    接收前端上传的文件，保存并调用 RAG 构建图谱
-    """
     try:
-        # 保存文件
         file_location = f"./.uploaded_docs/{file.filename}"
         with open(file_location, "wb+") as file_object:
             file_object.write(file.file.read())
-            
         print(f"📂 [Upload] 收到文件: {file.filename}，开始构建图谱...")
-        
-        # 调用 rag.py 的 build_graph
-        # 注意：文件较大时这里会阻塞一段时间
         rag_engine.build_graph(file_location)
-        
         print(f"✅ [Upload] 图谱构建完成")
         return {"status": "success", "message": f"图谱构建成功: {file.filename}"}
     except Exception as e:
-        print(f"❌ [Upload] 失败: {e}")
         return {"status": "error", "message": str(e)}
 
-# === 接口 B: 核心生成 (同步闭环模式) ===
+# === 接口 B: 核心生成 ===
 @app.post("/api/generate-mermaid")
 async def generate_mermaid(request: GenerateRequest):
-    """
-    核心接口：RAG -> Router -> CodeGen -> Check -> Revise -> Return JSON
-    """
     user_query = request.text
     print(f"\n⚡ [Generate] 收到请求: {user_query[:50]}...")
 
@@ -119,10 +133,8 @@ async def generate_mermaid(request: GenerateRequest):
         logic_analysis = route_res.get("analysis_content", "")
         print(f"   -> 策略: {route_res.get('reason', '常规')} (使用模板: {prompt_file})")
         
-        # 3. 生成代码 (调用同步方法)
+        # 3. 生成代码
         print("   -> 正在生成代码...")
-        # 注意：这里我们调用原始的 generate_code 方法，不使用 _stream
-        # 这样拿到的是完整的、带换行符的字符串
         initial_code = code_gen_agent.generate_code(logic_analysis, prompt_file=prompt_file)
         
         # 4. 后端自动校验
@@ -132,36 +144,26 @@ async def generate_mermaid(request: GenerateRequest):
         final_code = initial_code
         
         if not validation['valid']:
-            # --- 自动修复流程 ---
             error_msg = validation['error']
             print(f"   ❌ 校验失败: {error_msg[:50]}... 启动自动修复")
-            
             attempt_history = [{"code": initial_code, "error": error_msg}]
-            
-            # 调用同步修复方法
             fixed_code = code_revise_agent.revise_code(
                 initial_code, 
                 error_message=error_msg, 
                 previous_attempts=attempt_history
             )
-            
             final_code = fixed_code
             print("   ✅ 自动修复完成")
-            
-            # 记录错题 (闭环学习)
             try:
                 code_revise_agent.record_mistake(initial_code, error_msg, final_code)
             except Exception as e:
                 print(f"   ⚠️ 错题记录失败: {e}")
         else:
-            print("   ✅ 校验通过，代码完美")
-            # 记录成功经验 (闭环学习)
+            print("   ✅ 校验通过")
             try:
                 router_agent.learn_from_success(user_query, final_code)
             except: pass
 
-        # 5. 返回结果
-        # 直接返回字典，FastAPI 会自动处理成标准 JSON，换行符会被转义为 \n，前端能完美识别
         return {
             "mermaidCode": final_code,
             "error": None
@@ -174,12 +176,9 @@ async def generate_mermaid(request: GenerateRequest):
             "error": str(e)
         }
 
-# === 接口 C: 手动修复 (同步模式) ===
+# === 接口 C: 手动修复 ===
 @app.post("/api/fix-mermaid")
 async def fix_mermaid(request: FixRequest):
-    """
-    前端点击'智能修复'按钮时调用
-    """
     try:
         print(f"🔧 [Fix] 收到手动修复请求")
         fixed_code = code_revise_agent.revise_code(
@@ -191,13 +190,12 @@ async def fix_mermaid(request: FixRequest):
             "error": None
         }
     except Exception as e:
-        print(f"❌ [Fix] 修复失败: {e}")
         return {
             "fixedCode": request.mermaidCode,
             "error": str(e)
         }
 
-# === 接口 D: 辅助接口 (Mock) ===
+# === 接口 D: 辅助接口 ===
 @app.get("/api/models")
 async def get_models():
     return {
@@ -212,7 +210,5 @@ async def get_models():
 async def verify_password(req: PasswordRequest):
     return {"success": True, "message": "Access Granted"}
 
-# === 启动入口 ===
 if __name__ == "__main__":
-    # 监听所有IP的8000端口
     uvicorn.run(app, host="0.0.0.0", port=8000)
