@@ -258,6 +258,11 @@ export function MermaidEditor({ code, onChange, streamingContent, isStreaming, e
           placeholder="生成的 Mermaid 代码将显示在这里..."
           className="w-full h-full font-mono text-sm mermaid-editor overflow-y-auto resize-none"
           disabled={(showRealtime && isStreaming) || isFixing || isOptimizing}
+          // 修改点：禁用拼写检查和其他干扰代码编辑的自动功能
+          spellCheck={false}
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="off"
         />
       </div>
 
@@ -307,4 +312,4 @@ export function MermaidEditor({ code, onChange, streamingContent, isStreaming, e
       )}
     </div>
   );
-} 
+}

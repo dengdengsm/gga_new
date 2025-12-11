@@ -7,9 +7,8 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { 
   Download, 
-  ZoomIn, 
-  ZoomOut, 
   Minimize,
+  Maximize,
   Move
 } from "lucide-react";
 import "@excalidraw/excalidraw/index.css";
@@ -24,30 +23,56 @@ const Excalidraw = dynamic(
 );
 
 function ExcalidrawRenderer({ mermaidCode, onErrorChange }) {
+  // 基础 Mermaid 转换数据（作为兜底初始值）
   const [excalidrawElements, setExcalidrawElements] = useState([]);
   const [excalidrawFiles, setExcalidrawFiles] = useState({});
+  
   const [excalidrawAPI, setExcalidrawAPI] = useState(null);
   const [isRendering, setIsRendering] = useState(false);
   const [renderError, setRenderError] = useState(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [sceneKey, setSceneKey] = useState(0);
-  // 标记需要在新场景首次变更后执行一次自动适配
+  
+  // 场景控制 Key
+  const [sceneKey, setSceneKey] = useState(0);     // 代码变化时更新
+  const [remountKey, setRemountKey] = useState(0); // 模式切换时更新
+  
+  // 数据持久化引用（解决切换模式数据丢失问题）
+  const latestSceneElementsRef = useRef(null);
+  const latestAppStateRef = useRef(null);
+  const latestFilesRef = useRef(null);
+  
+  // 记录上一次处理的代码，防止切换全屏时重复解析覆盖用户数据
+  const prevMermaidCodeRef = useRef(null);
   const pendingFitSceneKeyRef = useRef(null);
+
+  // 切换全屏并强制重载
+  const toggleFullscreenMode = (targetStatus) => {
+    setIsFullscreen(targetStatus);
+    setRemountKey(prev => prev + 1);
+  };
 
   // 监听全局事件
   useEffect(() => {
     const handleResetView = () => {
       if (excalidrawAPI) {
         excalidrawAPI.resetScene();
+        // 仅当确实需要重置回初始代码状态时才调用
         if (mermaidCode && mermaidCode.trim()) {
-          // 重新渲染当前内容
-          renderMermaidContent();
+           // 清空用户更改记录，强制回退到代码生成状态
+           latestSceneElementsRef.current = null;
+           // 强制重新解析
+           prevMermaidCodeRef.current = null; 
+           renderMermaidContent();
         }
       }
     };
 
     const handleToggleFullscreen = () => {
-      setIsFullscreen(prev => !prev);
+      setIsFullscreen(prev => {
+        const nextStatus = !prev;
+        setRemountKey(k => k + 1);
+        return nextStatus;
+      });
     };
 
     window.addEventListener('resetView', handleResetView);
@@ -64,14 +89,15 @@ function ExcalidrawRenderer({ mermaidCode, onErrorChange }) {
       setExcalidrawElements([]);
       setExcalidrawFiles({});
       setRenderError(null);
-      // 清空旧的 API 引用，避免在重挂载过程中被误用
       setExcalidrawAPI(null);
-      setSceneKey((k) => {
-        const next = k + 1;
-        // 空内容不需要适配
-        pendingFitSceneKeyRef.current = null;
-        return next;
-      });
+      latestSceneElementsRef.current = null; // 清空缓存
+      setSceneKey(k => k + 1);
+      return;
+    }
+
+    // 如果代码没有变化（例如只是切换全屏触发了 Effect），则跳过解析
+    // 这样可以保留用户的绘图数据
+    if (prevMermaidCodeRef.current === mermaidCode) {
       return;
     }
 
@@ -79,23 +105,28 @@ function ExcalidrawRenderer({ mermaidCode, onErrorChange }) {
     setRenderError(null);
 
     try {
-      // 预处理 mermaidCode: 移除 <br> 标签
       const preprocessedCode = mermaidCode.replace(/<br\s*\/?>/gi, '');
       const { elements, files } = await parseMermaidToExcalidraw(preprocessedCode);
       const convertedElements = convertToExcalidrawElements(elements);
       
       setExcalidrawElements(convertedElements);
       setExcalidrawFiles(files);
-      // 清空旧的 API 引用，避免在重挂载过程中被误用
       setExcalidrawAPI(null);
+      
+      // 代码变了，这是全新的图，清空用户的旧笔迹缓存
+      latestSceneElementsRef.current = null;
+      latestAppStateRef.current = null;
+      latestFilesRef.current = null;
+
+      // 更新代码记录
+      prevMermaidCodeRef.current = mermaidCode;
+
       setSceneKey((k) => {
         const next = k + 1;
-        // 标记该场景需要在首次变更后自动适配
         pendingFitSceneKeyRef.current = next;
         return next;
       });
 
-      // 通知父组件没有错误
       if (onErrorChange) {
         onErrorChange(null, false);
       }
@@ -105,85 +136,74 @@ function ExcalidrawRenderer({ mermaidCode, onErrorChange }) {
       setRenderError(errorMsg);
       toast.error("图表渲染失败，请检查 Mermaid 代码语法");
 
-      // 通知父组件有错误，与 mermaid-renderer 保持一致
       if (onErrorChange) {
         onErrorChange(errorMsg, true);
       }
     } finally {
       setIsRendering(false);
     }
-  }, [mermaidCode]);
+  }, [mermaidCode, onErrorChange]);
 
   useEffect(() => {
     renderMermaidContent();
   }, [renderMermaidContent]);
 
-  // 通过 onChange 的首次回调来保证 Excalidraw 完成挂载和布局后再适配
-  // 以及在 sceneKey 或 API 就绪时也尝试进行一次自动适配（双保险）
+  // 自动适配视图逻辑
   useEffect(() => {
     if (!excalidrawAPI) return;
     if (renderError) return;
-    if (pendingFitSceneKeyRef.current !== sceneKey) return;
-    // 等待一帧，确保容器尺寸稳定
-    const raf = requestAnimationFrame(() => {
-      try {
-        excalidrawAPI.scrollToContent(undefined, { fitToContent: true });
-      } catch (e) {
-        console.error('Auto fit in effect failed:', e);
-      }
-      pendingFitSceneKeyRef.current = null;
-    });
-    return () => cancelAnimationFrame(raf);
-  }, [excalidrawAPI, sceneKey, renderError]);
-
-  // 缩放功能
-  const handleZoomIn = () => {
-    if (excalidrawAPI) {
-      excalidrawAPI.zoomIn();
-    }
-  };
-
-  const handleZoomOut = () => {
-    if (excalidrawAPI) {
-      excalidrawAPI.zoomOut();
-    }
-  };
-
-  const handleZoomReset = () => {
-    if (excalidrawAPI) {
-      excalidrawAPI.resetZoom();
-      if (excalidrawElements.length > 0) {
-        excalidrawAPI.scrollToContent(excalidrawElements, {
-          fitToContent: true,
-        });
-      }
-    }
-  };
-
-  // 适应窗口大小
-  const handleFitToScreen = () => {
-    if (excalidrawAPI && excalidrawElements.length > 0) {
-      excalidrawAPI.scrollToContent(excalidrawElements, {
-        fitToContent: true,
+    
+    // 如果是代码变化引起的新场景，或者是全屏切换
+    if (pendingFitSceneKeyRef.current === sceneKey || remountKey > 0) {
+      const raf = requestAnimationFrame(() => {
+        try {
+          excalidrawAPI.scrollToContent(undefined, { fitToContent: true });
+        } catch (e) {
+          console.error('Auto fit in effect failed:', e);
+        }
+        if (pendingFitSceneKeyRef.current === sceneKey) {
+            pendingFitSceneKeyRef.current = null;
+        }
       });
+      return () => cancelAnimationFrame(raf);
+    }
+  }, [excalidrawAPI, sceneKey, renderError, remountKey]);
+
+  // 适应窗口
+  const handleFitToScreen = () => {
+    if (excalidrawAPI) {
+      // 优先使用当前 API 获取的元素，确保包含用户新增的内容
+      const elements = excalidrawAPI.getSceneElements();
+      if (elements && elements.length > 0) {
+        excalidrawAPI.scrollToContent(elements, { fitToContent: true });
+      }
     }
   };
 
+  // 下载功能修复：使用当前真实场景数据
   const handleDownload = async () => {
-    if (!excalidrawAPI || excalidrawElements.length === 0) {
+    if (!excalidrawAPI) {
+      toast.error("组件未就绪");
+      return;
+    }
+
+    // 获取当前场景中的所有元素（包含用户修改）
+    const currentElements = excalidrawAPI.getSceneElements();
+    
+    if (!currentElements || currentElements.length === 0) {
       toast.error("没有可下载的内容");
       return;
     }
 
     try {
-      // 获取当前应用状态
       const appState = excalidrawAPI.getAppState();
-      
-      // 使用正确的exportToBlob API
+      // 获取当前文件列表，优先使用Ref中的（可能有用户上传的图），没有则用初始的
+      const currentFiles = latestFilesRef.current || excalidrawFiles;
+
       const blob = await exportToBlob({
-        elements: excalidrawElements,
+        elements: currentElements,
         appState: appState,
-        files: excalidrawFiles,
+        files: currentFiles,
         mimeType: "image/png",
         quality: 0.8,
       });
@@ -203,57 +223,81 @@ function ExcalidrawRenderer({ mermaidCode, onErrorChange }) {
     }
   };
 
+  // 数据变更监听：实时保存用户的笔迹
+  const handleExcalidrawChange = (elements, appState, files) => {
+    latestSceneElementsRef.current = elements;
+    latestAppStateRef.current = appState;
+    latestFilesRef.current = files;
+  };
+
   return (
     <div className={`${isFullscreen ? 'fixed inset-0 z-50 bg-background' : 'h-full'} flex flex-col`}>
-      {/* 控制栏 - 固定高度 */}
-      <div className="h-12 flex justify-between items-center px-2 flex-shrink-0">
-        <h3 className="text-sm font-medium">Excalidraw 图表</h3>
+      {/* Header */}
+      <div className="h-12 flex justify-between items-center px-2 flex-shrink-0 border-b bg-background">
+        <h3 className="text-sm font-medium flex items-center gap-2">
+          Excalidraw 图表
+          {!isFullscreen && (
+            <span className="text-[10px] text-muted-foreground font-normal bg-muted px-1.5 py-0.5 rounded border">
+              预览模式
+            </span>
+          )}
+        </h3>
         <div className="flex gap-2">
-          {/* 适应窗口 */}
           <Button
             variant="outline"
             size="sm"
             onClick={handleFitToScreen}
             className="h-7 gap-1 text-xs px-2"
             title="适应窗口"
-            disabled={!excalidrawAPI || excalidrawElements.length === 0}
+            disabled={!excalidrawAPI}
           >
             <Move className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">适应</span>
           </Button>
 
-          {/* 下载按钮 */}
           <Button
             variant="outline"
             size="sm"
             onClick={handleDownload}
-            disabled={!excalidrawAPI || excalidrawElements.length === 0}
+            disabled={!excalidrawAPI}
             className="h-7 gap-1 text-xs px-2"
           >
             <Download className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">下载</span>
           </Button>
 
-          {/* 全屏模式下的退出按钮 */}
-          {isFullscreen && (
+          {isFullscreen ? (
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => toggleFullscreenMode(false)}
+              className="h-7 gap-1 text-xs px-2"
+              title="完成编辑"
+            >
+              <Minimize className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">完成</span>
+            </Button>
+          ) : (
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setIsFullscreen(false)}
+              onClick={() => toggleFullscreenMode(true)}
               className="h-7 gap-1 text-xs px-2"
-              title="退出全屏"
+              title="全屏编辑"
             >
-              <Minimize className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">退出</span>
+              <Maximize className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">全屏编辑</span>
             </Button>
           )}
         </div>
       </div>
 
-      {/* 图表显示区域 - 占用剩余空间 */}
-      <div className="flex-1 border rounded-lg bg-gray-50 dark:bg-gray-900 relative min-h-0 overflow-hidden">
+      {/* Excalidraw Container */}
+      <div className="flex-1 bg-gray-50 dark:bg-gray-900 relative min-h-0 overflow-hidden group">
+        
+        {/* Loading / Error States */}
         {isRendering && (
-          <div className="absolute inset-0 flex items-center justify-center bg-background/80 z-10">
+          <div className="absolute inset-0 flex items-center justify-center bg-background/80 z-20">
             <div className="flex items-center space-x-2">
               <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
               <span className="text-muted-foreground">渲染中...</span>
@@ -262,7 +306,7 @@ function ExcalidrawRenderer({ mermaidCode, onErrorChange }) {
         )}
         
         {renderError && (
-          <div className="absolute inset-0 flex items-center justify-center bg-background/80 z-10">
+          <div className="absolute inset-0 flex items-center justify-center bg-background/80 z-20">
             <div className="text-center p-4">
               <p className="text-destructive mb-2">渲染失败</p>
               <p className="text-sm text-muted-foreground">{renderError}</p>
@@ -276,39 +320,47 @@ function ExcalidrawRenderer({ mermaidCode, onErrorChange }) {
           </div>
         )}
         
-        <div className="w-full h-full">
+        {/* 核心修复：预览模式遮罩层
+            1. z-index 高于 Excalidraw，拦截所有鼠标事件，防止双击穿透导致组件上浮。
+            2. 提供点击入口，用户体验更直观。
+        */}
+        {!isFullscreen && !isRendering && !renderError && mermaidCode && (
+          <div 
+            className="absolute inset-0 z-10 cursor-pointer flex items-center justify-center bg-transparent transition-colors hover:bg-black/5"
+            onClick={() => toggleFullscreenMode(true)}
+            title="点击进入全屏编辑模式"
+          >
+            <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-background/90 px-3 py-1.5 rounded-full shadow-sm border text-xs font-medium flex items-center gap-1.5 pointer-events-none">
+              <Maximize className="h-3 w-3" />
+              点击编辑
+            </div>
+          </div>
+        )}
+
+        {/* 画布区域 */}
+        <div className="w-full h-full relative">
           <Excalidraw
-            key={sceneKey}
+            // 组合 Key：确保场景变了或者模式变了都会重载
+            key={`${sceneKey}-${remountKey}`}
+            viewModeEnabled={!isFullscreen} 
+            zenModeEnabled={!isFullscreen}
+            gridModeEnabled={false}
             initialData={{
-              elements: excalidrawElements,
+              // 关键逻辑：如果 Ref 中有用户的数据，优先使用用户的；否则使用 Mermaid 生成的
+              elements: latestSceneElementsRef.current || excalidrawElements,
               appState: {
                 viewBackgroundColor: "#fafafa",
                 currentItemFontFamily: 1,
+                viewModeEnabled: !isFullscreen,
+                // 如果有保存的状态（比如滚动位置），也可以在这里恢复
+                ...(latestAppStateRef.current || {})
               },
-              files: excalidrawFiles,
-              scrollToContent: excalidrawElements.length > 0,
+              files: latestFilesRef.current || excalidrawFiles,
+              scrollToContent: true,
             }}
             excalidrawAPI={(api) => setExcalidrawAPI(api)}
-            onChange={(elements) => {
-              // 仅在新场景挂载后的首次变更时自动适配一次
-              if (
-                pendingFitSceneKeyRef.current === sceneKey &&
-                excalidrawAPI &&
-                elements &&
-                elements.length > 0 &&
-                !renderError
-              ) {
-                // 等待一帧，确保容器尺寸与布局稳定
-                requestAnimationFrame(() => {
-                  try {
-                    excalidrawAPI.scrollToContent(undefined, { fitToContent: true });
-                  } catch (e) {
-                    console.error('Auto fit in onChange failed:', e);
-                  }
-                });
-                pendingFitSceneKeyRef.current = null;
-              }
-            }}
+            // 实时监听变更
+            onChange={handleExcalidrawChange}
           />
         </div>
       </div>
@@ -316,4 +368,4 @@ function ExcalidrawRenderer({ mermaidCode, onErrorChange }) {
   );
 }
 
-export default ExcalidrawRenderer; 
+export default ExcalidrawRenderer;

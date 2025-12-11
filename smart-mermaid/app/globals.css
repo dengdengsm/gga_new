@@ -151,3 +151,24 @@
     padding-bottom: env(safe-area-inset-bottom);
   }
 }
+
+/* 新增：自定义优雅滚动条 
+  逻辑：宽度极细，轨道透明，滑块半透明圆角
+*/
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: oklch(var(--muted-foreground) / 0.3);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: oklch(var(--muted-foreground) / 0.5);
+}

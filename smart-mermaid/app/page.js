@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { Wand2, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { Wand2, FolderOpen } from "lucide-react"; // 新增 FolderOpen
 import { Header } from "@/components/header";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { TextInput } from "@/components/text-input";
@@ -38,13 +38,11 @@ export default function Home() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
-  // 已移除 remainingUsage 和 showLimitDialog 状态
   const [showSettingsDialog, setShowSettingsDialog] = useState(false);
   const [showContactDialog, setShowContactDialog] = useState(false);
   const [passwordVerified, setPasswordVerified] = useState(false);
   const [hasCustomConfig, setHasCustomConfig] = useState(false);
   
-  const [isLeftPanelCollapsed, setIsLeftPanelCollapsed] = useState(false);
   const [renderMode, setRenderMode] = useState("excalidraw"); 
   const [showRealtime, setShowRealtime] = useState(false);
   const [leftTab, setLeftTab] = useState("manual");
@@ -116,10 +114,6 @@ export default function Home() {
     setHasError(hasErr);
   };
 
-  const toggleLeftPanel = () => {
-    setIsLeftPanelCollapsed(!isLeftPanelCollapsed);
-  };
-
   const handleModelChange = useCallback((modelId) => {
     console.log('Selected model:', modelId);
   }, []);
@@ -134,8 +128,6 @@ export default function Home() {
       toast.error(`文本超过${maxChars}字符限制`);
       return;
     }
-
-    // 已移除 checkUsageLimit 检查逻辑
 
     setIsGenerating(true);
     setIsStreaming(showRealtime);
@@ -158,8 +150,6 @@ export default function Home() {
         return;
       }
 
-      // 已移除 incrementUsage 逻辑
-
       setMermaidCode(generatedCode);
       try {
         addHistoryEntry({ inputText, mermaidCode: generatedCode, diagramType });
@@ -176,26 +166,21 @@ export default function Home() {
   };
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden">
+    <div className="flex flex-col min-h-screen">
       <Header 
-        // 已移除 usageLimit 和 remainingUsage 属性
         onSettingsClick={handleSettingsClick}
         onContactClick={handleContactClick}
         isPasswordVerified={passwordVerified}
         hasCustomConfig={hasCustomConfig}
       />
       
-      <main className="flex-1 overflow-hidden">
+      <main className="flex-1">
         <div className="h-full p-4 md:p-6">
           <div 
-            className={`h-full grid gap-4 md:gap-6 transition-all duration-300 ${
-              isLeftPanelCollapsed ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-3'
-            }`}
+            className="h-full grid gap-4 md:gap-6 grid-cols-1 md:grid-cols-3 transition-all duration-300"
           >
             {/* 左侧面板 */}
-            <div className={`${
-              isLeftPanelCollapsed ? 'hidden md:hidden' : 'col-span-1'
-            } flex flex-col h-full overflow-hidden`}>
+            <div className="col-span-1 flex flex-col h-full overflow-hidden">
               
               <Tabs value={leftTab} onValueChange={setLeftTab} className="flex flex-col h-full">
                 <div className="h-auto md:h-12 flex flex-col md:flex-row justify-between items-start md:items-center gap-2 flex-shrink-0 pb-2 md:pb-0">
@@ -283,27 +268,18 @@ export default function Home() {
             </div>
             
             {/* 右侧面板 */}
-            <div className={`${
-              isLeftPanelCollapsed ? 'col-span-1' : 'col-span-1 md:col-span-2'
-            } flex flex-col h-full overflow-hidden`}>
+            <div className="col-span-1 md:col-span-2 flex flex-col h-full">
+              {/* Header：恢复 justify-between，左侧放置新按钮，右侧保留 Switch */}
               <div className="h-12 flex justify-between items-center flex-shrink-0">
+                {/* 占位按钮：打开项目 */}
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={toggleLeftPanel}
                   className="h-9"
+                  onClick={() => toast.info("功能开发中...")} // 简单的点击反馈
                 >
-                  {isLeftPanelCollapsed ? (
-                    <>
-                      <PanelLeftOpen className="h-4 w-4" />
-                      <span className="hidden sm:inline ml-2">显示</span>
-                    </>
-                  ) : (
-                    <>
-                      <PanelLeftClose className="h-4 w-4" />
-                      <span className="hidden sm:inline ml-2">隐藏</span>
-                    </>
-                  )}
+                  <FolderOpen className="h-4 w-4" />
+                  <span className="hidden sm:inline ml-2">打开项目</span>
                 </Button>
 
                 <div className="flex items-center gap-3">
@@ -320,7 +296,7 @@ export default function Home() {
                 </div>
               </div>
 
-              <div className="flex-1 min-h-0 mt-4" style={{ minHeight: '600px' }}>
+              <div className="flex-1 mt-4 overflow-y-auto" style={{ minHeight: '600px' }}>
                 {renderMode === "excalidraw" ? (
                   <ExcalidrawRenderer
                     mermaidCode={mermaidCode}
@@ -375,7 +351,6 @@ export default function Home() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      {/* 已移除 Usage Limit Dialog */}
     </div>
   );
 }
