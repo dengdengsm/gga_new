@@ -521,6 +521,37 @@ class LightGraphRAG:
         self.graph.clear()
         self._save_graph()
         print("数据库已重置。")
+    def reload_db(self, new_persist_dir: str):
+        """
+        动态切换 GraphRAG 的持久化存储路径 (用于项目切换)
+        """
+        print(f"🔄 [GraphRAG] 正在切换数据库路径至: {new_persist_dir}")
+        
+        # 1. 确保目录存在
+        os.makedirs(new_persist_dir, exist_ok=True)
+
+        # 2. 重新连接 ChromaDB
+        # 直接覆盖 self.client 实例即可指向新路径
+        self.client = chromadb.PersistentClient(path=new_persist_dir)
+        
+        # 3. 重新绑定集合 (Collection)
+        # 指针指向新 DB 中的集合
+        self.node_collection = self.client.get_or_create_collection(
+            name="graph_nodes",
+            metadata={"hnsw:space": "cosine"}
+        )
+
+        self.chunk_collection = self.client.get_or_create_collection(
+            name="graph_chunks",
+            metadata={"hnsw:space": "cosine"}
+        )
+        
+        # 4. 重新加载 NetworkX 图谱结构
+        self.graph_path = os.path.join(new_persist_dir, "knowledge_graph.json")
+        self.graph = nx.Graph() # 先清空内存中的旧图
+        self._load_graph()      # 从新路径加载 (若无文件则为空图)
+        
+        print(f"✅ [GraphRAG] 切换完成。当前节点数: {self.graph.number_of_nodes()}")
 
 if __name__ == "__main__":
     kg = LightGraphRAG()

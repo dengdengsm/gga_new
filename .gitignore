@@ -23,6 +23,7 @@ ehthumbs.db
 .local_rag_db/
 .uploaded_docs/
 .uploaded_images/
+.projects/
 
 # ==========================
 # Python (后端)

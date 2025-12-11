@@ -19,7 +19,7 @@ import { isPasswordVerified, hasCustomAIConfig } from "@/lib/config-service";
 import { Switch } from "@/components/ui/switch";
 import { HistoryList } from "@/components/history-list";
 import { getHistory, addHistoryEntry } from "@/lib/history-service";
-import { 
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -42,15 +42,15 @@ export default function Home() {
   const [showContactDialog, setShowContactDialog] = useState(false);
   const [passwordVerified, setPasswordVerified] = useState(false);
   const [hasCustomConfig, setHasCustomConfig] = useState(false);
-  
-  const [renderMode, setRenderMode] = useState("excalidraw"); 
+
+  const [renderMode, setRenderMode] = useState("excalidraw");
   const [showRealtime, setShowRealtime] = useState(false);
   const [leftTab, setLeftTab] = useState("manual");
   const [historyEntries, setHistoryEntries] = useState([]);
 
   const [errorMessage, setErrorMessage] = useState(null);
   const [hasError, setHasError] = useState(false);
-  
+
   const maxChars = parseInt(process.env.NEXT_PUBLIC_MAX_CHARS || "20000");
 
   useEffect(() => {
@@ -103,7 +103,7 @@ export default function Home() {
       const t = setTimeout(() => {
         try {
           window.dispatchEvent(new CustomEvent('resetView'));
-        } catch {}
+        } catch { }
       }, 0);
       return () => clearTimeout(t);
     }
@@ -152,9 +152,19 @@ export default function Home() {
 
       setMermaidCode(generatedCode);
       try {
-        addHistoryEntry({ inputText, mermaidCode: generatedCode, diagramType });
-        setHistoryEntries(getHistory());
-      } catch {}
+        addHistoryEntry({
+          query: inputText,
+          code: generatedCode,
+          diagramType
+        });
+
+        // 稍微延迟一下读取，确保后端写入完成（可选，但更稳妥）
+        setTimeout(async () => {
+          setHistoryEntries(await getHistory());
+        }, 100);
+      } catch (e) {
+        console.error("Failed to save history:", e);
+      }
       toast.success("图表生成成功");
     } catch (error) {
       console.error("Generation error:", error);
@@ -167,21 +177,21 @@ export default function Home() {
 
   return (
     <div className="flex flex-col min-h-screen">
-      <Header 
+      <Header
         onSettingsClick={handleSettingsClick}
         onContactClick={handleContactClick}
         isPasswordVerified={passwordVerified}
         hasCustomConfig={hasCustomConfig}
       />
-      
+
       <main className="flex-1">
         <div className="h-full p-4 md:p-6">
-          <div 
+          <div
             className="h-full grid gap-4 md:gap-6 grid-cols-1 md:grid-cols-3 transition-all duration-300"
           >
             {/* 左侧面板 */}
             <div className="col-span-1 flex flex-col h-full overflow-hidden">
-              
+
               <Tabs value={leftTab} onValueChange={setLeftTab} className="flex flex-col h-full">
                 <div className="h-auto md:h-12 flex flex-col md:flex-row justify-between items-start md:items-center gap-2 flex-shrink-0 pb-2 md:pb-0">
                   <TabsList className="h-9 w-full md:w-auto">
@@ -192,20 +202,20 @@ export default function Home() {
                   <div className="flex items-center gap-2 w-full md:w-auto flex-wrap">
                     <ModelSelector onModelChange={handleModelChange} />
                     <div className="flex-1 md:flex-none min-w-0">
-                      <DiagramTypeSelector 
-                        value={diagramType} 
-                        onChange={handleDiagramTypeChange} 
+                      <DiagramTypeSelector
+                        value={diagramType}
+                        onChange={handleDiagramTypeChange}
                       />
                     </div>
                   </div>
                 </div>
-                
+
                 <div className="flex-1 flex flex-col overflow-hidden mt-2 md:mt-4">
                   <div className="h-28 md:h-40 flex-shrink-0">
                     <TabsContent value="manual" className="h-full mt-0">
-                      <TextInput 
-                        value={inputText} 
-                        onChange={handleTextChange} 
+                      <TextInput
+                        value={inputText}
+                        onChange={handleTextChange}
                         maxChars={maxChars}
                       />
                     </TabsContent>
@@ -216,8 +226,10 @@ export default function Home() {
                       <HistoryList
                         items={historyEntries}
                         onSelect={(item) => {
-                          setInputText(item.inputText);
-                          setMermaidCode(item.mermaidCode);
+                          
+                          setInputText(item.query || item.inputText || "");
+                          setMermaidCode(item.code || item.mermaidCode || "");
+
                           setLeftTab("manual");
                         }}
                       />
@@ -225,8 +237,8 @@ export default function Home() {
                   </div>
 
                   <div className="h-16 flex items-center gap-2 flex-shrink-0">
-                    <Button 
-                      onClick={handleGenerateClick} 
+                    <Button
+                      onClick={handleGenerateClick}
                       disabled={isGenerating || !inputText.trim() || !isWithinCharLimit(inputText, maxChars)}
                       className="h-10 flex-1"
                     >
@@ -243,14 +255,14 @@ export default function Home() {
                       )}
                     </Button>
                     <div className="flex items-center">
-                      <Switch 
-                        checked={showRealtime} 
+                      <Switch
+                        checked={showRealtime}
                         onCheckedChange={setShowRealtime}
                         title="实时生成"
                       />
                     </div>
                   </div>
-                  
+
                   <div className="flex-1 min-h-0">
                     <MermaidEditor
                       code={mermaidCode}
@@ -266,7 +278,7 @@ export default function Home() {
                 </div>
               </Tabs>
             </div>
-            
+
             {/* 右侧面板 */}
             <div className="col-span-1 md:col-span-2 flex flex-col h-full">
               {/* Header：恢复 justify-between，左侧放置新按钮，右侧保留 Switch */}
@@ -314,15 +326,15 @@ export default function Home() {
           </div>
         </div>
       </main>
-      
+
       <footer className="h-12 border-t flex items-center justify-center flex-shrink-0">
         <div className="text-center text-sm text-muted-foreground">
           AI 驱动的文本转 Mermaid 图表 Web 应用 &copy; {new Date().getFullYear()}
         </div>
       </footer>
 
-      <SettingsDialog 
-        open={showSettingsDialog} 
+      <SettingsDialog
+        open={showSettingsDialog}
         onOpenChange={setShowSettingsDialog}
         onPasswordVerified={handlePasswordVerified}
         onConfigUpdated={handleConfigUpdated}
