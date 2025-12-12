@@ -268,17 +268,6 @@ export default function Home() {
             <div className="col-span-1 md:col-span-2 flex flex-col h-full">
               {/* Header：恢复 justify-between，左侧放置新按钮，右侧保留 Switch */}
               <div className="h-12 flex justify-between items-center flex-shrink-0">
-                {/* 占位按钮：打开项目 */}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-9"
-                  onClick={() => toast.info("功能开发中...")} // 简单的点击反馈
-                >
-                  <FolderOpen className="h-4 w-4" />
-                  <span className="hidden sm:inline ml-2">打开项目</span>
-                </Button>
-
                 <div className="flex items-center gap-3">
                   <div className="flex items-center gap-2">
                     <Switch

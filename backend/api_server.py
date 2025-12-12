@@ -4,6 +4,7 @@ import shutil
 import uvicorn
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import glob
@@ -39,10 +40,18 @@ class ProjectManager:
         os.makedirs(os.path.join(p_dir, "uploads"), exist_ok=True)
         os.makedirs(os.path.join(p_dir, "graph_db"), exist_ok=True)
         
+        # 确保 history.json 存在
         hist_file = os.path.join(p_dir, "history.json")
         if not os.path.exists(hist_file):
             with open(hist_file, "w", encoding="utf-8") as f:
                 json.dump([], f)
+                
+        # 【新增】确保 files.json 存在 (用于持久化文件列表)
+        files_record = os.path.join(p_dir, "files.json")
+        if not os.path.exists(files_record):
+            with open(files_record, "w", encoding="utf-8") as f:
+                json.dump([], f)
+                
         return p_dir
 
     def list_projects(self):
@@ -55,6 +64,45 @@ class ProjectManager:
             raise ValueError(f"Project {project_name} does not exist")
         self.current_project = project_name
         return self.get_project_dir(project_name)
+
+    # 【新增】文件记录操作辅助函数
+    def get_file_records(self):
+        record_path = os.path.join(self.get_project_dir(), "files.json")
+        try:
+            if os.path.exists(record_path):
+                with open(record_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            return []
+        except:
+            return []
+
+    def add_file_record(self, record: dict):
+        record_path = os.path.join(self.get_project_dir(), "files.json")
+        records = self.get_file_records()
+        records.insert(0, record) # 最新在前
+        with open(record_path, "w", encoding="utf-8") as f:
+            json.dump(records, f, ensure_ascii=False, indent=2)
+
+    def update_file_status(self, file_id: str, status: str, message: str):
+        record_path = os.path.join(self.get_project_dir(), "files.json")
+        records = self.get_file_records()
+        updated = False
+        for rec in records:
+            if rec.get("id") == file_id:
+                rec["status"] = status
+                rec["message"] = message
+                updated = True
+                break
+        if updated:
+            with open(record_path, "w", encoding="utf-8") as f:
+                json.dump(records, f, ensure_ascii=False, indent=2)
+
+    def remove_file_record(self, file_id: str):
+        record_path = os.path.join(self.get_project_dir(), "files.json")
+        records = self.get_file_records()
+        records = [r for r in records if r.get("id") != file_id]
+        with open(record_path, "w", encoding="utf-8") as f:
+            json.dump(records, f, ensure_ascii=False, indent=2)
 
 project_manager = ProjectManager()
 
@@ -86,26 +134,32 @@ except Exception as e:
     print(f"❌ [Backend] 引擎加载失败: {e}")
 
 
-# --- 任务状态管理 ---
+# --- 任务状态管理 (内存缓存 + 持久化更新) ---
 tasks = {}
 
 def process_upload_background(task_id: str, file_location: str, project_name: str):
     """后台任务：处理文件并构建图谱"""
-    # 【关键修改】先睡 1 秒，确保主线程已经把 HTTP Response 发送给前端了
-    # 避免抢占 CPU 导致 socket hang up
-    time.sleep(1)
+    time.sleep(2) # 等待主线程响应完成
     
     try:
         tasks[task_id] = {"status": "processing", "message": "正在深度解析内容..."}
+        # 【持久化】更新状态为处理中（其实上传时已经是pending，这里可以是processing）
+        project_manager.update_file_status(task_id, "processing", "正在深度解析内容...")
+        
         print(f"🔄 [Task {task_id}] 开始后台处理: {os.path.basename(file_location)}")
         
         # 执行耗时操作
         rag_engine.build_graph(file_location)
         
         tasks[task_id] = {"status": "success", "message": "图谱构建完成"}
+        # 【持久化】更新状态为成功
+        project_manager.update_file_status(task_id, "success", "图谱构建完成")
         print(f"✅ [Task {task_id}] 处理完成")
+        
     except Exception as e:
         tasks[task_id] = {"status": "error", "message": str(e)}
+        # 【持久化】更新状态为失败
+        project_manager.update_file_status(task_id, "error", str(e))
         print(f"❌ [Task {task_id}] 处理失败: {e}")
 
 
@@ -178,6 +232,18 @@ async def switch_project(req: ProjectSwitchRequest):
         return {"status": "success", "current": req.name}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+# === 【新增】文件列表接口 ===
+@app.get("/api/files")
+async def list_files():
+    """获取当前项目已上传的文件列表"""
+    return project_manager.get_file_records()
+
+@app.delete("/api/files/{file_id}")
+async def delete_file(file_id: str):
+    """删除文件记录 (物理删除可选，这里先做逻辑删除)"""
+    project_manager.remove_file_record(file_id)
+    return {"status": "success"}
 
 # === 历史记录接口 ===
 
@@ -259,16 +325,12 @@ async def update_system_config(config: ConfigUpdateRequest):
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
-# === 文件上传接口 (修复版) ===
+# === 文件上传接口 (持久化版) ===
 
-# 【关键修改】去掉 async，让它在线程池中运行，防止阻塞事件循环
 @app.post("/api/upload")
-def upload_file(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+async def upload_file(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     """
-    同步上传接口 (Thread Pool)：
-    1. 使用 shutil 高效保存文件
-    2. 立即返回任务 ID
-    3. 后台延时执行分析
+    异步上传 + 线程池写入 + 持久化记录
     """
     try:
         upload_dir = os.path.join(project_manager.get_project_dir(), "uploads")
@@ -276,14 +338,18 @@ def upload_file(background_tasks: BackgroundTasks, file: UploadFile = File(...))
         
         file_location = os.path.join(upload_dir, file.filename)
         
-        # 【关键修改】使用 shutil.copyfileobj 代替 await file.read()
-        # 这样不会一次性把大文件读入内存，也避免了 async 阻塞
-        with open(file_location, "wb+") as file_object:
-            shutil.copyfileobj(file.file, file_object)
+        # 分块写入磁盘
+        with open(file_location, "wb") as f:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                await run_in_threadpool(f.write, chunk)
             
         task_id = str(uuid.uuid4())
         print(f"📂 [Upload] 收到文件: {file.filename}, 分配任务 ID: {task_id}")
         
+        # 1. 内存任务记录 (短期轮询)
         tasks[task_id] = {
             "status": "pending",
             "message": "已加入处理队列...",
@@ -291,6 +357,18 @@ def upload_file(background_tasks: BackgroundTasks, file: UploadFile = File(...))
             "timestamp": time.time()
         }
         
+        # 2. 【持久化】写入 files.json (长期存储)
+        file_record = {
+            "id": task_id,
+            "filename": file.filename,
+            "status": "pending",
+            "message": "已加入处理队列...",
+            "timestamp": datetime.now().isoformat(),
+            "size": 0 # 这里如果能获取大小更好，暂时置0
+        }
+        project_manager.add_file_record(file_record)
+        
+        # 3. 触发后台任务
         background_tasks.add_task(
             process_upload_background, 
             task_id, 
