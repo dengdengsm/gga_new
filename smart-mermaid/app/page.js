@@ -31,7 +31,6 @@ export default function Home() {
   const [streamingContent, setStreamingContent] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [showSettingsDialog, setShowSettingsDialog] = useState(false);
-  // 已移除 showContactDialog 状态
   const [passwordVerified, setPasswordVerified] = useState(false);
   const [hasCustomConfig, setHasCustomConfig] = useState(false);
 
@@ -58,9 +57,7 @@ export default function Home() {
     setInputText(text);
   };
 
-  const handleFileTextExtracted = (text) => {
-    setInputText(text);
-  };
+  // 已移除 handleFileTextExtracted 函数，文件上传现在独立处理
 
   const handleDiagramTypeChange = (type) => {
     setDiagramType(type);
@@ -77,8 +74,6 @@ export default function Home() {
   const handleSettingsClick = () => {
     setShowSettingsDialog(true);
   };
-
-  // 已移除 handleContactClick 函数
 
   const handlePasswordVerified = (verified) => {
     setPasswordVerified(verified);
@@ -169,7 +164,6 @@ export default function Home() {
     <div className="flex flex-col min-h-screen">
       <Header
         onSettingsClick={handleSettingsClick}
-        // 已移除 onContactClick 属性
         isPasswordVerified={passwordVerified}
         hasCustomConfig={hasCustomConfig}
       />
@@ -210,7 +204,8 @@ export default function Home() {
                       />
                     </TabsContent>
                     <TabsContent value="file" className="h-full mt-0">
-                      <FileUpload onTextExtracted={handleFileTextExtracted} />
+                      {/* 修改：移除了 onTextExtracted 属性 */}
+                      <FileUpload />
                     </TabsContent>
                     <TabsContent value="history" className="h-full mt-0">
                       <HistoryList
