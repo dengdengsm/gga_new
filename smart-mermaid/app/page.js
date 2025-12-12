@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { Wand2, FolderOpen } from "lucide-react"; // 新增 FolderOpen
+import { Wand2, FolderOpen } from "lucide-react";
 import { Header } from "@/components/header";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { TextInput } from "@/components/text-input";
@@ -19,14 +19,6 @@ import { isPasswordVerified, hasCustomAIConfig } from "@/lib/config-service";
 import { Switch } from "@/components/ui/switch";
 import { HistoryList } from "@/components/history-list";
 import { getHistory, addHistoryEntry } from "@/lib/history-service";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter
-} from "@/components/ui/dialog";
 import dynamic from "next/dynamic";
 
 const ExcalidrawRenderer = dynamic(() => import("@/components/excalidraw-renderer"), { ssr: false });
@@ -39,7 +31,7 @@ export default function Home() {
   const [streamingContent, setStreamingContent] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [showSettingsDialog, setShowSettingsDialog] = useState(false);
-  const [showContactDialog, setShowContactDialog] = useState(false);
+  // 已移除 showContactDialog 状态
   const [passwordVerified, setPasswordVerified] = useState(false);
   const [hasCustomConfig, setHasCustomConfig] = useState(false);
 
@@ -86,9 +78,7 @@ export default function Home() {
     setShowSettingsDialog(true);
   };
 
-  const handleContactClick = () => {
-    setShowContactDialog(true);
-  };
+  // 已移除 handleContactClick 函数
 
   const handlePasswordVerified = (verified) => {
     setPasswordVerified(verified);
@@ -179,7 +169,7 @@ export default function Home() {
     <div className="flex flex-col min-h-screen">
       <Header
         onSettingsClick={handleSettingsClick}
-        onContactClick={handleContactClick}
+        // 已移除 onContactClick 属性
         isPasswordVerified={passwordVerified}
         hasCustomConfig={hasCustomConfig}
       />
@@ -339,30 +329,6 @@ export default function Home() {
         onPasswordVerified={handlePasswordVerified}
         onConfigUpdated={handleConfigUpdated}
       />
-
-      <Dialog open={showContactDialog} onOpenChange={setShowContactDialog}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>联系作者</DialogTitle>
-            <DialogDescription>
-              <div className="py-4">
-                <p className="mb-2">如需技术支持，请扫描下方二维码联系作者（注明目的）</p>
-                <div className="flex justify-center my-4">
-                  <img src="/qrcode.png" alt="联系二维码" className="w-48" />
-                </div>
-                <p className="text-sm text-muted-foreground">
-                  提示：您也可以在设置中配置自己的AI服务密钥。
-                </p>
-              </div>
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="sm:justify-center">
-            <Button variant="secondary" onClick={() => setShowContactDialog(false)}>
-              关闭
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
