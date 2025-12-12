@@ -38,14 +38,17 @@ class LightGraphRAG:
             name="graph_chunks",
             metadata={"hnsw:space": "cosine"}
         )
-        
+        self.graph_version = 0
+
         self.graph_path = os.path.join(persist_dir, "knowledge_graph.json")
         self.graph = nx.Graph()
         self._load_graph()
         
         self.extractor = deepseek_agent(model_name="deepseek-chat")
+        self.lock=True
 
     def _load_graph(self):
+        self.graph_version += 1
         if os.path.exists(self.graph_path):
             with open(self.graph_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
@@ -54,6 +57,7 @@ class LightGraphRAG:
             os.makedirs(os.path.dirname(self.graph_path), exist_ok=True)
 
     def _save_graph(self):
+        self.graph_version += 1
         data = nx.node_link_data(self.graph)
         with open(self.graph_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False)
@@ -81,6 +85,7 @@ class LightGraphRAG:
                 return f.read()
 
     def _add_edge_safe(self, src: str, tgt: str, relation: str, source_id: str, summary: str):
+        self.lock=False
         if self.graph.has_edge(src, tgt):
             edge_data = self.graph[src][tgt]
             if 'evidence' not in edge_data: edge_data['evidence'] = []
@@ -90,6 +95,7 @@ class LightGraphRAG:
                 edge_data['evidence'].append({"chunk_id": source_id, "summary": summary})
         else:
             self.graph.add_edge(src, tgt, relation=relation, evidence=[{"chunk_id": source_id, "summary": summary}])
+        self.lock=True
 
     # --- Phase 1 ---
     def _extract_chunk_content(self, text_chunk: str, system_prompt: str) -> Dict[str, Any]:
@@ -369,6 +375,7 @@ class LightGraphRAG:
 
         # Phase 1: Concurrent Extraction
         print(f"Phase 1: 启动基础提取 (Tasks: {len(chunks)})...")
+        all_summaries = [] 
         file_contents = [None] * len(chunks)
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
             future_to_index = {
@@ -378,23 +385,21 @@ class LightGraphRAG:
             for future in concurrent.futures.as_completed(future_to_index):
                 i = future_to_index[future]
                 file_contents[i] = future.result() or {}
-
-        print("写入初步图谱数据...")
-        all_summaries = [] 
-        for i, data in enumerate(file_contents):
-            chunk_id = chunk_ids[i]
-            summary = data.get("summary", "No Summary")
-            all_summaries.append(summary)
-            for item in data.get("triples", []):
-                if len(item) < 3: continue
-                src, rel, tgt = item[:3]  # 只取前3个，忽略多余的
-                self._add_edge_safe(src, tgt, rel, source_id=chunk_id, summary=summary)
+                data = file_contents[i]
+                chunk_id = chunk_ids[i]
+                summary = data.get("summary", "No Summary")
+                all_summaries.append(summary)
+                for item in data.get("triples", []):
+                    if len(item) < 3: continue
+                    src, rel, tgt = item[:3]  # 只取前3个，忽略多余的
+                    self._add_edge_safe(src, tgt, rel, source_id=chunk_id, summary=summary)
+                self.graph_version += 1
 
         # Phase 2: Concurrent Refinement
         if len(chunks) > 1:
             print(f"Phase 2: 并发逻辑缝合 (Tasks: {len(chunks)-1})...")
             refine_results = [[] for _ in range(len(chunks) - 1)]
-            
+            count_new = 0
             with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
                 future_to_index = {}
                 for i in range(len(chunks) - 1):
@@ -419,30 +424,29 @@ class LightGraphRAG:
                     try:
                         new_edges = future.result()
                         refine_results[idx] = new_edges
+                        if not new_edges: continue
+                        curr_id = chunk_ids[idx]
+                        next_id = chunk_ids[idx+1]
+                        for edge in new_edges:
+                            if not isinstance(edge, list) or len(edge) < 3: continue
+                            src, rel, tgt = edge[:3]
+                            self._add_edge_safe(src, tgt, rel, source_id=f"link_{curr_id}_{next_id}", summary="Adjacent Logic Inference")
+                            count_new += 1
+                        self.graph_version += 1
                     except Exception as e:
                         print(f"Task {idx} failed: {e}")
-
-            print("正在整合缝合结果...")
-            count_new = 0
-            for i, new_edges in enumerate(refine_results):
-                if not new_edges: continue
-                curr_id = chunk_ids[i]
-                next_id = chunk_ids[i+1]
-                for edge in new_edges:
-                    if not isinstance(edge, list) or len(edge) < 3: continue
-                    src, rel, tgt = edge[:3]
-                    self._add_edge_safe(src, tgt, rel, source_id=f"link_{curr_id}_{next_id}", summary="Adjacent Logic Inference")
-                    count_new += 1
             print(f"✨ 逻辑缝合完成，新增 {count_new} 条跨块逻辑。")
 
         # Phase 3: Global Inference (Backbone)
         print(f"Phase 3: 宏观逻辑推导...")
         valid_contents = [c for c in file_contents if c]
         self._infer_global_relationships(valid_contents, p_infer)
+        self.graph_version += 1
 
         # Phase 4: Backbone-Fragment Optimization
         print(f"Phase 4: 主干-碎片实体对齐优化...")
         self._optimize_graph_structure(p_resolve, max_iterations=10)
+        self.graph_version+=1
 
         # Final Indexing
         final_nodes = list(self.graph.nodes())
@@ -521,6 +525,35 @@ class LightGraphRAG:
         self.graph.clear()
         self._save_graph()
         print("数据库已重置。")
+
+
+    def get_graph_snapshot(self):
+        """获取图谱快照 (前端轮询用)"""
+        if self.lock:
+            nodes = []
+            for n in list(self.graph.nodes()):
+                degree = self.graph.degree(n)
+                size = 5 + (degree * 0.5) if degree else 5
+                nodes.append({
+                        "id": str(n),
+                        "label": str(n),
+                        "color": "#4F8BF9",
+                        "val": size
+                    })
+                
+            links = []
+            for u, v, data in list(self.graph.edges(data=True)):
+                links.append({
+                        "source": str(u), 
+                        "target": str(v), 
+                        "label": data.get("relation", "")
+                    })
+                    
+            return {
+                    "version": self.graph_version, 
+                    "nodes": nodes, 
+                    "links": links
+                }
     def reload_db(self, new_persist_dir: str):
         """
         动态切换 GraphRAG 的持久化存储路径 (用于项目切换)

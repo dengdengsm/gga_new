@@ -245,6 +245,12 @@ async def delete_file(file_id: str):
     project_manager.remove_file_record(file_id)
     return {"status": "success"}
 
+# === 【新增】图谱数据接口 ===
+@app.get("/api/graph/data")
+async def get_graph_data():
+    """获取当前知识图谱的实时数据 (Nodes, Links)"""
+    return rag_engine.get_graph_snapshot()
+
 # === 历史记录接口 ===
 
 @app.get("/api/history")

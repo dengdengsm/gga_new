@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { Wand2, FolderOpen } from "lucide-react";
+import { Wand2, Network, FolderOpen } from "lucide-react";
 import { Header } from "@/components/header";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { TextInput } from "@/components/text-input";
@@ -21,7 +21,9 @@ import { HistoryList } from "@/components/history-list";
 import { getHistory, addHistoryEntry } from "@/lib/history-service";
 import dynamic from "next/dynamic";
 
+// 动态导入渲染组件
 const ExcalidrawRenderer = dynamic(() => import("@/components/excalidraw-renderer"), { ssr: false });
+const KnowledgeGraphRenderer = dynamic(() => import("@/components/knowledge-graph-renderer").then(mod => mod.KnowledgeGraphRenderer), { ssr: false });
 
 export default function Home() {
   const [inputText, setInputText] = useState("");
@@ -34,15 +36,22 @@ export default function Home() {
   const [passwordVerified, setPasswordVerified] = useState(false);
   const [hasCustomConfig, setHasCustomConfig] = useState(false);
 
-  const [renderMode, setRenderMode] = useState("excalidraw");
+  // 修改：renderMode 增加 'graph' 状态
+  const [renderMode, setRenderMode] = useState("mermaid"); // 'mermaid' | 'excalidraw' | 'graph'
+  
   const [showRealtime, setShowRealtime] = useState(false);
   const [leftTab, setLeftTab] = useState("manual");
   const [historyEntries, setHistoryEntries] = useState([]);
+
+  // 知识图谱相关状态
+  const [graphData, setGraphData] = useState({ nodes: [], links: [] });
+  const graphPollingInterval = useRef(null);
 
   const [errorMessage, setErrorMessage] = useState(null);
   const [hasError, setHasError] = useState(false);
 
   const maxChars = parseInt(process.env.NEXT_PUBLIC_MAX_CHARS || "20000");
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
   useEffect(() => {
     // Check password verification status
@@ -56,8 +65,6 @@ export default function Home() {
   const handleTextChange = (text) => {
     setInputText(text);
   };
-
-  // 已移除 handleFileTextExtracted 函数，文件上传现在独立处理
 
   const handleDiagramTypeChange = (type) => {
     setDiagramType(type);
@@ -93,6 +100,47 @@ export default function Home() {
       return () => clearTimeout(t);
     }
   }, [renderMode]);
+
+  // --- 知识图谱轮询逻辑 ---
+  const fetchGraphData = async () => {
+    try {
+      // 获取图谱快照
+      const res = await fetch(`${API_URL}/api/graph/data`);
+      if (res.ok) {
+        const data = await res.json();
+        // 只有当节点数变化时才更新 (简单的防抖，防止力导向图一直重置)
+        setGraphData(prev => {
+           if (prev.nodes.length !== data.nodes.length || prev.links.length !== data.links.length) {
+               return data;
+           }
+           return prev; // 返回旧引用，React 不会触发 effect
+        });
+      }
+    } catch (error) {
+      console.error("Failed to fetch graph data:", error);
+    }
+  };
+
+  useEffect(() => {
+    if (renderMode === 'graph') {
+      // 立即获取一次
+      fetchGraphData();
+      // 开启轮询 (每2秒)
+      graphPollingInterval.current = setInterval(fetchGraphData, 2000);
+    } else {
+      if (graphPollingInterval.current) {
+        clearInterval(graphPollingInterval.current);
+        graphPollingInterval.current = null;
+      }
+    }
+
+    return () => {
+      if (graphPollingInterval.current) {
+        clearInterval(graphPollingInterval.current);
+      }
+    };
+  }, [renderMode]);
+  // -----------------------
 
   const handleErrorChange = (error, hasErr) => {
     setErrorMessage(error);
@@ -204,17 +252,14 @@ export default function Home() {
                       />
                     </TabsContent>
                     <TabsContent value="file" className="h-full mt-0">
-                      {/* 修改：移除了 onTextExtracted 属性 */}
                       <FileUpload />
                     </TabsContent>
                     <TabsContent value="history" className="h-full mt-0">
                       <HistoryList
                         items={historyEntries}
                         onSelect={(item) => {
-                          
                           setInputText(item.query || item.inputText || "");
                           setMermaidCode(item.code || item.mermaidCode || "");
-
                           setLeftTab("manual");
                         }}
                       />
@@ -266,33 +311,64 @@ export default function Home() {
 
             {/* 右侧面板 */}
             <div className="col-span-1 md:col-span-2 flex flex-col h-full">
-              {/* Header：恢复 justify-between，左侧放置新按钮，右侧保留 Switch */}
+              {/* Header：右侧面板工具栏 */}
               <div className="h-12 flex justify-between items-center flex-shrink-0">
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-2">
-                    <Switch
-                      checked={renderMode === "mermaid"}
-                      onCheckedChange={(checked) => setRenderMode(checked ? "mermaid" : "excalidraw")}
-                      title="切换渲染器：Excalidraw / Mermaid"
-                    />
-                    <span className="text-xs text-muted-foreground">
-                      {renderMode === "mermaid" ? "Mermaid" : "Excalidraw"}
-                    </span>
-                  </div>
+                <div className="flex items-center gap-2 bg-muted p-1 rounded-lg">
+                   {/* 模式切换器 */}
+                   <Button 
+                      variant={renderMode === "mermaid" ? "secondary" : "ghost"}
+                      size="sm"
+                      onClick={() => setRenderMode("mermaid")}
+                      className="h-8 text-xs px-3"
+                   >
+                     Mermaid
+                   </Button>
+                   <Button 
+                      variant={renderMode === "excalidraw" ? "secondary" : "ghost"}
+                      size="sm"
+                      onClick={() => setRenderMode("excalidraw")}
+                      className="h-8 text-xs px-3"
+                   >
+                     Excalidraw
+                   </Button>
+                   <Button 
+                      variant={renderMode === "graph" ? "secondary" : "ghost"}
+                      size="sm"
+                      onClick={() => setRenderMode("graph")}
+                      className="h-8 text-xs px-3 gap-1"
+                   >
+                     <Network className="h-3 w-3" />
+                     知识图谱
+                   </Button>
+                </div>
+                
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    {renderMode === 'graph' && (
+                        <span className="flex items-center animate-pulse">
+                            <span className="h-2 w-2 rounded-full bg-green-500 mr-2"></span>
+                            Live Sync
+                        </span>
+                    )}
                 </div>
               </div>
 
-              <div className="flex-1 mt-4 overflow-y-auto" style={{ minHeight: '600px' }}>
-                {renderMode === "excalidraw" ? (
-                  <ExcalidrawRenderer
-                    mermaidCode={mermaidCode}
-                    onErrorChange={handleErrorChange}
-                  />
-                ) : (
+              <div className="flex-1 mt-4 overflow-y-auto min-h-[600px] border rounded-lg bg-background">
+                {renderMode === "mermaid" && (
                   <MermaidRenderer
                     mermaidCode={mermaidCode}
                     onChange={handleMermaidCodeChange}
                     onErrorChange={handleErrorChange}
+                  />
+                )}
+                {renderMode === "excalidraw" && (
+                  <ExcalidrawRenderer
+                    mermaidCode={mermaidCode}
+                    onErrorChange={handleErrorChange}
+                  />
+                )}
+                {renderMode === "graph" && (
+                  <KnowledgeGraphRenderer 
+                    graphData={graphData}
                   />
                 )}
               </div>
