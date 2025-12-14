@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { Wand2, Network, FolderOpen } from "lucide-react";
+import { Wand2, Network, FolderOpen, BrainCircuit, FileText } from "lucide-react"; // 引入图标
 import { Header } from "@/components/header";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { TextInput } from "@/components/text-input";
@@ -17,6 +17,7 @@ import { generateMermaidFromText } from "@/lib/ai-service";
 import { isWithinCharLimit } from "@/lib/utils";
 import { isPasswordVerified, hasCustomAIConfig } from "@/lib/config-service";
 import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label"; // 引入 Label
 import { HistoryList } from "@/components/history-list";
 import { getHistory, addHistoryEntry } from "@/lib/history-service";
 import dynamic from "next/dynamic";
@@ -36,7 +37,9 @@ export default function Home() {
   const [passwordVerified, setPasswordVerified] = useState(false);
   const [hasCustomConfig, setHasCustomConfig] = useState(false);
 
-  // 修改：renderMode 增加 'graph' 状态
+  // 【新增】是否使用知识图谱模式
+  const [useGraph, setUseGraph] = useState(false);
+
   const [renderMode, setRenderMode] = useState("mermaid"); // 'mermaid' | 'excalidraw' | 'graph'
   
   const [showRealtime, setShowRealtime] = useState(false);
@@ -54,11 +57,8 @@ export default function Home() {
   const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
   useEffect(() => {
-    // Check password verification status
     setPasswordVerified(isPasswordVerified());
-    // Check custom AI config status
     setHasCustomConfig(hasCustomAIConfig());
-    // Load history list
     setHistoryEntries(getHistory());
   }, []);
 
@@ -103,17 +103,18 @@ export default function Home() {
 
   // --- 知识图谱轮询逻辑 ---
   const fetchGraphData = async () => {
+    // 只有在开启图谱模式时才去轮询数据
+    if (!useGraph && renderMode === 'graph') return; 
+
     try {
-      // 获取图谱快照
       const res = await fetch(`${API_URL}/api/graph/data`);
       if (res.ok) {
         const data = await res.json();
-        // 只有当节点数变化时才更新 (简单的防抖，防止力导向图一直重置)
         setGraphData(prev => {
            if (prev.nodes.length !== data.nodes.length || prev.links.length !== data.links.length) {
                return data;
            }
-           return prev; // 返回旧引用，React 不会触发 effect
+           return prev; 
         });
       }
     } catch (error) {
@@ -122,10 +123,8 @@ export default function Home() {
   };
 
   useEffect(() => {
-    if (renderMode === 'graph') {
-      // 立即获取一次
+    if (renderMode === 'graph' && useGraph) {
       fetchGraphData();
-      // 开启轮询 (每2秒)
       graphPollingInterval.current = setInterval(fetchGraphData, 2000);
     } else {
       if (graphPollingInterval.current) {
@@ -139,7 +138,7 @@ export default function Home() {
         clearInterval(graphPollingInterval.current);
       }
     };
-  }, [renderMode]);
+  }, [renderMode, useGraph]); // 监听 useGraph 变化
   // -----------------------
 
   const handleErrorChange = (error, hasErr) => {
@@ -167,10 +166,12 @@ export default function Home() {
     setStreamingContent("");
 
     try {
+      // 【修改】传入 useGraph 参数
       const { mermaidCode: generatedCode, error } = await generateMermaidFromText(
         inputText,
         diagramType,
-        showRealtime ? handleStreamChunk : null
+        showRealtime ? handleStreamChunk : null,
+        useGraph 
       );
 
       if (error) {
@@ -190,8 +191,6 @@ export default function Home() {
           code: generatedCode,
           diagramType
         });
-
-        // 稍微延迟一下读取，确保后端写入完成（可选，但更稳妥）
         setTimeout(async () => {
           setHistoryEntries(await getHistory());
         }, 100);
@@ -225,15 +224,32 @@ export default function Home() {
             <div className="col-span-1 flex flex-col h-full overflow-hidden">
 
               <Tabs value={leftTab} onValueChange={setLeftTab} className="flex flex-col h-full">
-                <div className="h-auto md:h-12 flex flex-col md:flex-row justify-between items-start md:items-center gap-2 flex-shrink-0 pb-2 md:pb-0">
-                  <TabsList className="h-9 w-full md:w-auto">
-                    <TabsTrigger value="manual" className="flex-1 md:flex-none">手动输入</TabsTrigger>
-                    <TabsTrigger value="file" className="flex-1 md:flex-none">文件上传</TabsTrigger>
-                    <TabsTrigger value="history" className="flex-1 md:flex-none">历史记录</TabsTrigger>
-                  </TabsList>
-                  <div className="flex items-center gap-2 w-full md:w-auto flex-wrap">
+                <div className="flex flex-col gap-2 pb-2">
+                  {/* 第一行：Tabs */}
+                  <div className="flex justify-between items-center">
+                    <TabsList className="h-9">
+                      <TabsTrigger value="manual">手动输入</TabsTrigger>
+                      <TabsTrigger value="file">文件上传</TabsTrigger>
+                      <TabsTrigger value="history">历史记录</TabsTrigger>
+                    </TabsList>
+
+                    {/* 【新增】知识图谱模式开关 */}
+                    <div className="flex items-center space-x-2 bg-muted/50 px-3 py-1.5 rounded-md border">
+                        {useGraph ? 
+                            <BrainCircuit className="h-4 w-4 text-primary" /> : 
+                            <FileText className="h-4 w-4 text-muted-foreground" />
+                        }
+                        <Switch id="graph-mode" checked={useGraph} onCheckedChange={setUseGraph} />
+                        <Label htmlFor="graph-mode" className="text-xs font-medium cursor-pointer">
+                            {useGraph ? "知识图谱 RAG" : "直接文档阅读"}
+                        </Label>
+                    </div>
+                  </div>
+
+                  {/* 第二行：Model & Type Selectors */}
+                  <div className="flex items-center gap-2 flex-wrap">
                     <ModelSelector onModelChange={handleModelChange} />
-                    <div className="flex-1 md:flex-none min-w-0">
+                    <div className="flex-1 min-w-0">
                       <DiagramTypeSelector
                         value={diagramType}
                         onChange={handleDiagramTypeChange}
@@ -242,7 +258,7 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div className="flex-1 flex flex-col overflow-hidden mt-2 md:mt-4">
+                <div className="flex-1 flex flex-col overflow-hidden mt-2">
                   <div className="h-28 md:h-40 flex-shrink-0">
                     <TabsContent value="manual" className="h-full mt-0">
                       <TextInput
@@ -252,7 +268,8 @@ export default function Home() {
                       />
                     </TabsContent>
                     <TabsContent value="file" className="h-full mt-0">
-                      <FileUpload />
+                      {/* 【修改】传入 autoBuild 参数，由 useGraph 控制 */}
+                      <FileUpload autoBuild={useGraph} />
                     </TabsContent>
                     <TabsContent value="history" className="h-full mt-0">
                       <HistoryList
@@ -275,7 +292,7 @@ export default function Home() {
                       {isGenerating ? (
                         <>
                           <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-background mr-2"></div>
-                          生成中...
+                          {useGraph ? "检索并生成..." : "读取并生成..."}
                         </>
                       ) : (
                         <>
@@ -284,12 +301,12 @@ export default function Home() {
                         </>
                       )}
                     </Button>
-                    <div className="flex items-center">
-                      <Switch
+                    <div className="flex items-center gap-2 px-2">
+                       <span className="text-xs text-muted-foreground">流式</span>
+                       <Switch
                         checked={showRealtime}
                         onCheckedChange={setShowRealtime}
-                        title="实时生成"
-                      />
+                       />
                     </div>
                   </div>
 
@@ -311,10 +328,9 @@ export default function Home() {
 
             {/* 右侧面板 */}
             <div className="col-span-1 md:col-span-2 flex flex-col h-full">
-              {/* Header：右侧面板工具栏 */}
+              {/* Header */}
               <div className="h-12 flex justify-between items-center flex-shrink-0">
                 <div className="flex items-center gap-2 bg-muted p-1 rounded-lg">
-                   {/* 模式切换器 */}
                    <Button 
                       variant={renderMode === "mermaid" ? "secondary" : "ghost"}
                       size="sm"
@@ -336,6 +352,8 @@ export default function Home() {
                       size="sm"
                       onClick={() => setRenderMode("graph")}
                       className="h-8 text-xs px-3 gap-1"
+                      disabled={!useGraph} // 如果关闭了图谱模式，禁用图谱视图
+                      title={!useGraph ? "图谱模式已关闭" : "查看知识图谱"}
                    >
                      <Network className="h-3 w-3" />
                      知识图谱
@@ -343,7 +361,7 @@ export default function Home() {
                 </div>
                 
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    {renderMode === 'graph' && (
+                    {renderMode === 'graph' && useGraph && (
                         <span className="flex items-center animate-pulse">
                             <span className="h-2 w-2 rounded-full bg-green-500 mr-2"></span>
                             Live Sync
@@ -366,10 +384,17 @@ export default function Home() {
                     onErrorChange={handleErrorChange}
                   />
                 )}
-                {renderMode === "graph" && (
+                {renderMode === "graph" && useGraph && (
                   <KnowledgeGraphRenderer 
                     graphData={graphData}
                   />
+                )}
+                {renderMode === "graph" && !useGraph && (
+                    <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+                        <Network className="h-12 w-12 mb-4 opacity-20" />
+                        <p>当前处于“直接文档阅读”模式</p>
+                        <p className="text-sm mt-2">请开启“知识图谱 RAG”以查看图谱可视化</p>
+                    </div>
                 )}
               </div>
             </div>

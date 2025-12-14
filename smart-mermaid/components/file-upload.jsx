@@ -3,17 +3,17 @@
 import { useState, useCallback, useEffect } from "react";
 import { useDropzone } from "react-dropzone";
 import { toast } from "sonner";
-import { Upload, FileText, Loader2, CheckCircle2, XCircle, Trash2, Image as ImageIcon, Plus } from "lucide-react";
+import { Upload, FileText, Loader2, CheckCircle2, XCircle, Trash2, Image as ImageIcon, Plus, FileClock } from "lucide-react";
 
-export function FileUpload() {
+// 【修改】接收 autoBuild 参数，默认 true
+export function FileUpload({ autoBuild = true }) {
   // 文件项结构: { id, filename, status, message, file?: File }
-  // 注意：本地刚上传的有 file 对象，从后端加载的只有 filename
   const [fileList, setFileList] = useState([]);
 
-  // 1. 初始化加载：获取后端保存的文件列表
+  // 1. 初始化加载
   useEffect(() => {
     fetchFiles();
-  }, []); // 空依赖，仅挂载时执行一次（如果需要随项目切换更新，父组件需要控制 key 刷新此组件）
+  }, []);
 
   const fetchFiles = async () => {
     try {
@@ -27,7 +27,6 @@ export function FileUpload() {
     }
   };
 
-  // 更新单个文件的状态辅助函数
   const updateFileStatus = (id, newStatus, newMessage, taskId = null) => {
     setFileList(prev => prev.map(item => {
       if (item.id === id) {
@@ -42,11 +41,12 @@ export function FileUpload() {
     }));
   };
 
-  // 轮询 Effect：检查处理中的任务
+  // 轮询 Effect
   useEffect(() => {
     const timer = setInterval(() => {
       setFileList(currentList => {
-        // 筛选出 "processing" 或 "pending" 且有 ID 的任务进行轮询
+        // 筛选出 "processing" 或 "pending" 的任务进行轮询
+        // 注意：如果是 'uploaded' 状态（不自动构建），则不会进入轮询，符合预期
         const processingItems = currentList.filter(item => 
           (item.status === 'processing' || item.status === 'pending') && item.id
         );
@@ -54,8 +54,6 @@ export function FileUpload() {
         if (processingItems.length === 0) return currentList;
 
         processingItems.forEach(item => {
-          // 这里可以使用 tasks 接口查状态，也可以重新拉取 file list
-          // 为了准确性，我们查 tasks 接口，它反映实时进度
           fetch(`/api/tasks/${item.id}`)
             .then(res => res.json())
             .then(data => {
@@ -66,7 +64,6 @@ export function FileUpload() {
                   toast.error(`文档 "${item.filename || item.file?.name}" 分析失败`);
                 }
                 
-                // 更新状态
                 setFileList(prev => prev.map(curr => {
                     if (curr.id === item.id) {
                         return { ...curr, status: data.status, message: data.message };
@@ -88,10 +85,9 @@ export function FileUpload() {
   const onDrop = useCallback(async (acceptedFiles) => {
     if (acceptedFiles.length === 0) return;
 
-    // 初始化新的文件项
     const newFiles = acceptedFiles.map(file => ({
-      id: Math.random().toString(36).substring(7), // 临时ID，稍后会被后端ID替换
-      file, // 保留原始 File 对象用于上传
+      id: Math.random().toString(36).substring(7),
+      file,
       filename: file.name,
       status: 'pending',
       message: '等待上传...'
@@ -105,6 +101,8 @@ export function FileUpload() {
 
       const formData = new FormData();
       formData.append("file", fileItem.file);
+      // 【修改】传递 autoBuild 标志
+      formData.append("autoBuild", autoBuild); 
 
       try {
         const response = await fetch("/api/upload", {
@@ -117,18 +115,26 @@ export function FileUpload() {
         const result = await response.json();
 
         if (result.status === "success") {
-          // 关键：上传成功后，更新ID为后端生成的 taskId，确保轮询和持久化一致
+          // 【修改】根据 autoBuild 决定后续显示的初始状态
+          const nextStatus = autoBuild ? 'processing' : 'uploaded';
+          const nextMsg = autoBuild ? '正在云端深度分析...' : '文件已保存 (待分析)';
+
           setFileList(prev => prev.map(item => {
               if (item.id === fileItem.id) {
                   return {
                       ...item,
-                      id: result.taskId, // 替换为真实 ID
-                      status: 'processing',
-                      message: '正在云端深度分析...'
+                      id: result.taskId, 
+                      status: nextStatus, // 这里如果是 uploaded，就不会被轮询捕获
+                      message: nextMsg
                   };
               }
               return item;
           }));
+          
+          if (!autoBuild) {
+              toast.success(`文件 "${fileItem.filename}" 上传成功`);
+          }
+
         } else {
           updateFileStatus(fileItem.id, 'error', result.message || "上传失败");
           toast.error(`❌ 上传失败: ${fileItem.filename}`);
@@ -140,15 +146,11 @@ export function FileUpload() {
         toast.error(`❌ 上传中断: ${fileItem.filename}`);
       }
     });
-  }, []);
+  }, [autoBuild]); // 【修改】依赖项加入 autoBuild
 
   const removeFile = async (e, id) => {
     e.stopPropagation(); 
-    
-    // 乐观 UI 更新：先移除前端
     setFileList(prev => prev.filter(item => item.id !== id));
-    
-    // 调用后端删除
     try {
         await fetch(`/api/files/${id}`, { method: 'DELETE' });
     } catch(e) {
@@ -208,6 +210,11 @@ export function FileUpload() {
                   <p className="text-xs text-muted-foreground mt-1">
                     支持 .md, .txt, .pdf, .docx, .png, .jpg
                   </p>
+                  {!autoBuild && (
+                      <p className="text-[10px] text-orange-500 mt-2">
+                          * 当前模式仅上传，生成时才进行分析
+                      </p>
+                  )}
                 </div>
              </>
         )}
@@ -218,7 +225,6 @@ export function FileUpload() {
         <div className="flex-1 overflow-y-auto min-h-0 border rounded-md bg-muted/20">
           <div className="divide-y">
             {fileList.map((item) => {
-              // 兼容逻辑：刚上传的有 file 对象，后端加载的只有 filename 字符串
               const name = item.filename || item.file?.name || "Unknown File";
               const isImage = name.match(/\.(jpg|jpeg|png|gif)$/i);
 
@@ -240,7 +246,9 @@ export function FileUpload() {
                     </div>
                     
                     <div className="flex items-center gap-1.5 mt-0.5">
+                      {/* 状态图标 */}
                       {(item.status === 'pending' || !item.status) && <span className="h-1.5 w-1.5 rounded-full bg-gray-400" />}
+                      {item.status === 'uploaded' && <FileClock className="h-3 w-3 text-blue-400" />} 
                       {item.status === 'uploading' && <Loader2 className="h-3 w-3 animate-spin text-blue-500" />}
                       {item.status === 'processing' && <Loader2 className="h-3 w-3 animate-spin text-purple-500" />}
                       {item.status === 'success' && <CheckCircle2 className="h-3 w-3 text-green-500" />}
@@ -249,6 +257,7 @@ export function FileUpload() {
                       <p className={`text-[10px] truncate ${
                         item.status === 'error' ? 'text-red-500' : 
                         item.status === 'success' ? 'text-green-600' : 
+                        item.status === 'uploaded' ? 'text-blue-500' :
                         'text-muted-foreground'
                       }`}>
                         {item.message || (item.status === 'success' ? '已完成' : '处理中...')}

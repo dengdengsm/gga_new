@@ -19,6 +19,7 @@ from graphrag import LightGraphRAG
 from codez_gen import CodeGenAgent
 from code_revise import CodeReviseAgent
 from utils import quick_validate_mermaid
+from document_reader import DocumentAnalyzer  # 【新增】
 
 # --- 配置 ---
 PROJECTS_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.projects"))
@@ -46,7 +47,7 @@ class ProjectManager:
             with open(hist_file, "w", encoding="utf-8") as f:
                 json.dump([], f)
                 
-        # 【新增】确保 files.json 存在 (用于持久化文件列表)
+        # 确保 files.json 存在 (用于持久化文件列表)
         files_record = os.path.join(p_dir, "files.json")
         if not os.path.exists(files_record):
             with open(files_record, "w", encoding="utf-8") as f:
@@ -65,7 +66,7 @@ class ProjectManager:
         self.current_project = project_name
         return self.get_project_dir(project_name)
 
-    # 【新增】文件记录操作辅助函数
+    # 文件记录操作辅助函数
     def get_file_records(self):
         record_path = os.path.join(self.get_project_dir(), "files.json")
         try:
@@ -129,6 +130,7 @@ try:
         mistake_file_path="./knowledge/experience/mistakes.json", 
         model_name="deepseek-chat"
     )
+    doc_analyzer = DocumentAnalyzer() # 【新增】直接文档分析器
     print("✅ [Backend] 引擎加载完毕！")
 except Exception as e:
     print(f"❌ [Backend] 引擎加载失败: {e}")
@@ -143,7 +145,6 @@ def process_upload_background(task_id: str, file_location: str, project_name: st
     
     try:
         tasks[task_id] = {"status": "processing", "message": "正在深度解析内容..."}
-        # 【持久化】更新状态为处理中（其实上传时已经是pending，这里可以是processing）
         project_manager.update_file_status(task_id, "processing", "正在深度解析内容...")
         
         print(f"🔄 [Task {task_id}] 开始后台处理: {os.path.basename(file_location)}")
@@ -152,13 +153,11 @@ def process_upload_background(task_id: str, file_location: str, project_name: st
         rag_engine.build_graph(file_location)
         
         tasks[task_id] = {"status": "success", "message": "图谱构建完成"}
-        # 【持久化】更新状态为成功
         project_manager.update_file_status(task_id, "success", "图谱构建完成")
         print(f"✅ [Task {task_id}] 处理完成")
         
     except Exception as e:
         tasks[task_id] = {"status": "error", "message": str(e)}
-        # 【持久化】更新状态为失败
         project_manager.update_file_status(task_id, "error", str(e))
         print(f"❌ [Task {task_id}] 处理失败: {e}")
 
@@ -169,6 +168,7 @@ class GenerateRequest(BaseModel):
     text: str
     diagramType: str = "auto"
     aiConfig: Optional[Dict[str, Any]] = None
+    useGraph: bool = True # 【新增】是否使用知识图谱
 
 class FixRequest(BaseModel):
     mermaidCode: str
@@ -233,7 +233,7 @@ async def switch_project(req: ProjectSwitchRequest):
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
-# === 【新增】文件列表接口 ===
+# === 文件列表接口 ===
 @app.get("/api/files")
 async def list_files():
     """获取当前项目已上传的文件列表"""
@@ -241,11 +241,11 @@ async def list_files():
 
 @app.delete("/api/files/{file_id}")
 async def delete_file(file_id: str):
-    """删除文件记录 (物理删除可选，这里先做逻辑删除)"""
+    """删除文件记录"""
     project_manager.remove_file_record(file_id)
     return {"status": "success"}
 
-# === 【新增】图谱数据接口 ===
+# === 图谱数据接口 ===
 @app.get("/api/graph/data")
 async def get_graph_data():
     """获取当前知识图谱的实时数据 (Nodes, Links)"""
@@ -331,10 +331,14 @@ async def update_system_config(config: ConfigUpdateRequest):
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
-# === 文件上传接口 (持久化版) ===
+# === 文件上传接口 (持久化版 + AutoBuild控制) ===
 
 @app.post("/api/upload")
-async def upload_file(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+async def upload_file(
+    background_tasks: BackgroundTasks, 
+    file: UploadFile = File(...),
+    autoBuild: bool = Form(True) # 【新增】默认自动构建
+):
     """
     异步上传 + 线程池写入 + 持久化记录
     """
@@ -353,38 +357,45 @@ async def upload_file(background_tasks: BackgroundTasks, file: UploadFile = File
                 await run_in_threadpool(f.write, chunk)
             
         task_id = str(uuid.uuid4())
-        print(f"📂 [Upload] 收到文件: {file.filename}, 分配任务 ID: {task_id}")
+        print(f"📂 [Upload] 收到文件: {file.filename}, ID: {task_id}, AutoBuild: {autoBuild}")
+        
+        # 状态初始化：如果不自动构建，状态直接为 uploaded
+        initial_status = "pending" if autoBuild else "uploaded"
+        initial_msg = "已加入处理队列..." if autoBuild else "文件已保存 (待分析)"
         
         # 1. 内存任务记录 (短期轮询)
         tasks[task_id] = {
-            "status": "pending",
-            "message": "已加入处理队列...",
+            "status": initial_status,
+            "message": initial_msg,
             "filename": file.filename,
-            "timestamp": time.time()
+            "timestamp": time.time(),
+            "location": file_location # 记录路径方便后续查找
         }
         
         # 2. 【持久化】写入 files.json (长期存储)
         file_record = {
             "id": task_id,
             "filename": file.filename,
-            "status": "pending",
-            "message": "已加入处理队列...",
+            "status": initial_status,
+            "message": initial_msg,
             "timestamp": datetime.now().isoformat(),
-            "size": 0 # 这里如果能获取大小更好，暂时置0
+            "location": file_location, # 新增
+            "size": 0 
         }
         project_manager.add_file_record(file_record)
         
-        # 3. 触发后台任务
-        background_tasks.add_task(
-            process_upload_background, 
-            task_id, 
-            file_location, 
-            project_manager.current_project
-        )
+        # 3. 触发后台任务 (仅当 autoBuild 为 True)
+        if autoBuild:
+            background_tasks.add_task(
+                process_upload_background, 
+                task_id, 
+                file_location, 
+                project_manager.current_project
+            )
         
         return {
             "status": "success", 
-            "message": "文件上传成功，正在后台分析",
+            "message": "文件上传成功" + ("，正在后台分析" if autoBuild else "，等待使用"),
             "taskId": task_id,
             "filename": file.filename
         }
@@ -399,15 +410,71 @@ async def get_task_status(task_id: str):
         return {"status": "error", "message": "任务不存在或已过期"}
     return task
 
-# === 核心生成接口 ===
+# === 核心生成接口 (增强版：支持 useGraph) ===
 @app.post("/api/generate-mermaid")
 async def generate_mermaid(request: GenerateRequest):
     user_query = request.text
-    print(f"\n⚡ [Generate] 收到请求: {user_query[:50]}... (Project: {project_manager.current_project})")
+    use_graph = request.useGraph
+    
+    print(f"\n⚡ [Generate] 收到请求: {user_query[:50]}... (Project: {project_manager.current_project}, UseGraph: {use_graph})")
 
     try:
-        print("   -> 正在检索知识库...")
-        context = rag_engine.search(user_query, top_k=3)
+        context = ""
+        
+        if use_graph:
+            print("   -> 模式: 知识图谱 RAG")
+            # 1. Lazy Build: 检查是否有未构建的文件 (status='uploaded')
+            # 简单策略：只检查当前项目记录中的第一个 'uploaded' 文件
+            records = project_manager.get_file_records()
+            target_file = next((r for r in records if r.get("status") == "uploaded"), None)
+            
+            if target_file:
+                print(f"   -> 发现未构建文件: {target_file['filename']}，开始现场构建...")
+                file_path = target_file.get("location")
+                if not file_path:
+                     file_path = os.path.join(project_manager.get_project_dir(), "uploads", target_file['filename'])
+                
+                if os.path.exists(file_path):
+                    # 同步阻塞构建
+                    try:
+                        project_manager.update_file_status(target_file['id'], "processing", "生成时自动构建中...")
+                        rag_engine.build_graph(file_path) 
+                        project_manager.update_file_status(target_file['id'], "success", "图谱构建完成")
+                        print("   ✅ 现场构建完成")
+                    except Exception as build_e:
+                        print(f"   ❌ 现场构建失败: {build_e}")
+                        project_manager.update_file_status(target_file['id'], "error", str(build_e))
+                else:
+                    print(f"   ⚠️ 文件不存在: {file_path}")
+
+            # 2. 知识检索
+            print("   -> 正在检索知识库...")
+            context = rag_engine.search(user_query, top_k=3)
+            
+        else:
+            print("   -> 模式: 直接文档分析 (Document Reader)")
+            # 1. 找到最新上传的文件
+            records = project_manager.get_file_records()
+            if not records:
+                print("   -> 没有找到文件，回退到纯文本模式")
+                context = ""
+            else:
+                # 默认取第一个文件
+                target_file = records[0]
+                file_path = target_file.get("location")
+                if not file_path:
+                     file_path = os.path.join(project_manager.get_project_dir(), "uploads", target_file['filename'])
+                
+                if os.path.exists(file_path):
+                    print(f"   -> 正在读取文档: {target_file['filename']}")
+                    # 全文分析 (不使用 GraphRAG)
+                    analysis_result = doc_analyzer.analyze(file_path, prompt=None) 
+                    context = f"User Uploaded Document Content Analysis:\n{analysis_result}"
+                else:
+                    print("   ⚠️ 文件路径无效")
+                    context = ""
+
+        # === 公共流程：Router -> Gen -> Revise ===
         
         print("   -> Router 正在制定策略...")
         route_res = router_agent.route_and_analyze(user_content=context, user_target=user_query)
@@ -417,30 +484,69 @@ async def generate_mermaid(request: GenerateRequest):
         print("   -> 正在生成代码...")
         initial_code = code_gen_agent.generate_code(logic_analysis, prompt_file=prompt_file)
         
-        print("   -> 正在校验代码语法...")
-        validation = quick_validate_mermaid(initial_code)
-        
-        final_code = initial_code
-        
-        if not validation['valid']:
-            error_msg = validation['error']
-            print(f"   ❌ 校验失败: {error_msg[:50]}... 启动自动修复")
-            attempt_history = [{"code": initial_code, "error": error_msg}]
-            fixed_code = code_revise_agent.revise_code(
-                initial_code, 
-                error_message=error_msg, 
-                previous_attempts=attempt_history
-            )
-            final_code = fixed_code
-            try:
-                code_revise_agent.record_mistake(initial_code, error_msg, final_code)
-            except: pass
-        else:
-            print("   ✅ 校验通过")
-            try: router_agent.learn_from_success(user_query, final_code)
-            except: pass
+        # === 循环修复逻辑开始 ===
+        current_code = initial_code
+        max_retries = 3  # 最大重试次数
+        attempt_history = []
+        validation = {'valid': False, 'error': 'Not started'}
 
-        return {"mermaidCode": final_code, "error": None}
+        print(f"   -> 正在校验代码语法 (最大重试 {max_retries} 次)...")
+
+        for i in range(max_retries + 1):
+            print(f"   🔍 [第 {i+1} 次校验] ...")
+            validation = quick_validate_mermaid(current_code)
+            
+            if validation['valid']:
+                print("   ✅ 校验通过")
+                
+                # 如果经历过修复，记录经验 (Mistake Learning)
+                if i > 0 and len(attempt_history) > 0 and code_revise_agent:
+                    try:
+                        last_fail = attempt_history[-1]
+                        code_revise_agent.record_mistake(last_fail["code"], last_fail["error"], current_code)
+                        print("   📚 错误修复经验已录入")
+                    except Exception as e:
+                        print(f"   ⚠️ 经验录入失败: {e}")
+                
+                # 学习成功经验 (Router Learning)
+                try: 
+                    if router_agent: router_agent.learn_from_success(user_query, current_code)
+                except: pass
+                
+                break # 成功，跳出循环
+            
+            else:
+                # 校验失败
+                error_msg = validation['error']
+                print(f"   ❌ 校验失败: {error_msg[:50]}...")
+                
+                if i == max_retries:
+                    print("   ❌ 达到最大重试次数，放弃自动修复")
+                    break
+                
+                # 记录失败历史，供下次修复参考
+                attempt_history.append({
+                    "code": current_code,
+                    "error": error_msg
+                })
+                
+                if code_revise_agent:
+                    print(f"   🔧 启动自动修复 (第 {i+1} 次尝试)...")
+                    # 关键：传入 previous_attempts 历史记录
+                    current_code = code_revise_agent.revise_code(
+                        current_code, 
+                        error_message=error_msg, 
+                        previous_attempts=attempt_history
+                    )
+                else:
+                    print("   ⚠️ CodeReviseAgent 未加载，无法进行修复")
+                    break
+        
+        final_code = current_code
+        # 如果最后还是 invalid，保留错误信息传给前端
+        final_error = validation['error'] if not validation['valid'] else None
+
+        return {"mermaidCode": final_code, "error": final_error}
 
     except Exception as e:
         print(f"🔥 [Generate] 处理异常: {e}")

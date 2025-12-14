@@ -13,7 +13,7 @@ class DocumentAnalyzer(Agent):
     """
     def __init__(self, api_key=None, base_url="https://dashscope.aliyuncs.com/compatible-mode/v1", model_name="qwen-long"):
         # 优先读取环境变量，或者使用传入值
-        final_key = api_key or os.getenv("DASHSCOPE_API_KEY")
+        final_key = "sk-3b009784a72d4d969c005e2afb2a7087"
         
         # 调用父类构造函数，初始化 self.client
         super().__init__(

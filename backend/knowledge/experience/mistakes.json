@@ -62,5 +62,13 @@
   {
     "q": "Read timed out",
     "a": "Increase the timeout setting for network requests to handle slow or unresponsive servers."
+  },
+  {
+    "q": "reserved keyword used as class name",
+    "a": "Avoid using reserved keywords for identifiers; choose alternative names"
+  },
+  {
+    "q": "Parse error: Expecting 'SEMI', 'NEWLINE', 'SPACE', 'EOF', 'SHAPE_DATA', 'START_LINK', 'LINK', 'LINK_ID', got 'STYLE_SEPARATOR'",
+    "a": "Ensure proper syntax and spacing in graph definitions, avoiding misplaced or unexpected separators like ':::'."
   }
 ]
