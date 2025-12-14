@@ -118,6 +118,56 @@ class RouterAgent:
                 "reason": "Fallback: JSON Parse Error",
                 "analysis_content": user_content[:2000]
             }
+        
+    def analyze_specific_mode(self, user_content: str, user_target: str, specific_type: str) -> Dict[str, Any]:
+        """
+        【新增】定向分析模式：当用户明确指定图表类型时调用
+        跳过选型步骤，直接生成针对该图表的分析内容。
+        """
+        print(f"⚡ Router 进入定向分析模式 -> 目标类型: {specific_type}")
+        
+        # 1. 依然尝试检索相关经验 (可能包含针对该特定图表的画法技巧)
+        retrieved_experiences = self.rag.search(query=user_target, top_k=5)
+        experience_context = ""
+        if retrieved_experiences:
+             experience_context = "\n### Past Design Patterns:\n" + "\n".join([f"- {exp}" for exp in retrieved_experiences])
+
+        # 2. 构造定向 Prompt
+        system_prompt = (
+            f"You are a Visualization Expert. The user has EXPLICITLY requested a '{specific_type}' diagram.\n"
+            f"Your task is NOT to choose a diagram type, but to ANALYZE the content specifically for a '{specific_type}'.\n\n"
+            f"### INSTRUCTIONS:\n"
+            f"1. Analyze the [User Content] and [User Requirement].\n"
+            f"2. Extract the key entities, relationships, or steps needed to build a high-quality {specific_type}.\n"
+            f"3. Do NOT suggest other diagram types.\n"
+            f"4. Output JSON strictly.\n\n"
+            f"{experience_context}\n\n"
+            f"### OUTPUT FORMAT (JSON):\n"
+            f"{{\n"
+            f"  \"reason\": \"User manually selected {specific_type}.\",\n"
+            f"  \"target_prompt_file\": \"{specific_type}.md\",\n"
+            f"  \"analysis_content\": \"...Structured analysis summary suitable for generating {specific_type} code...\"\n"
+            f"}}"
+        )
+
+        messages = [{"role": "user", "content": f"[User Requirement]: {user_target}\n\n[Context Content]:\n{user_content}"}]
+
+        try:
+            response_text = self.llm.chat(messages, system_prompt=system_prompt, json_mode=True)
+            result = json.loads(response_text)
+            
+            # 强制修正文件名，防止LLM幻觉
+            target_file = f"{specific_type}.md"
+            result['target_prompt_file'] = target_file
+            
+            return result
+        except Exception as e:
+            print(f"Router 定向分析失败: {e}，使用原始内容作为分析结果")
+            return {
+                "target_prompt_file": f"{specific_type}.md",
+                "reason": "Fallback: Analysis Failed",
+                "analysis_content": f"Requirement: {user_target}\nContext: {user_content[:1500]}"
+            }
 
     def learn_from_success(self, user_query: str, valid_code: str):
         """

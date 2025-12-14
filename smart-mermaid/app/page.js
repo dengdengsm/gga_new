@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { Wand2, Network, FolderOpen, BrainCircuit, FileText } from "lucide-react"; // 引入图标
+import { Wand2, Network, FolderOpen, BrainCircuit, FileText, FileSearch } from "lucide-react"; // 引入图标
 import { Header } from "@/components/header";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { TextInput } from "@/components/text-input";
@@ -17,7 +17,7 @@ import { generateMermaidFromText } from "@/lib/ai-service";
 import { isWithinCharLimit } from "@/lib/utils";
 import { isPasswordVerified, hasCustomAIConfig } from "@/lib/config-service";
 import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label"; // 引入 Label
+import { Label } from "@/components/ui/label";
 import { HistoryList } from "@/components/history-list";
 import { getHistory, addHistoryEntry } from "@/lib/history-service";
 import dynamic from "next/dynamic";
@@ -37,10 +37,11 @@ export default function Home() {
   const [passwordVerified, setPasswordVerified] = useState(false);
   const [hasCustomConfig, setHasCustomConfig] = useState(false);
 
-  // 【新增】是否使用知识图谱模式
-  const [useGraph, setUseGraph] = useState(false);
+  // 状态控制开关
+  const [useGraph, setUseGraph] = useState(false); // 知识图谱模式
+  const [useFileContext, setUseFileContext] = useState(true); // 【新增】是否依赖文件上下文
 
-  const [renderMode, setRenderMode] = useState("mermaid"); // 'mermaid' | 'excalidraw' | 'graph'
+  const [renderMode, setRenderMode] = useState("mermaid");
   
   const [showRealtime, setShowRealtime] = useState(false);
   const [leftTab, setLeftTab] = useState("manual");
@@ -103,7 +104,6 @@ export default function Home() {
 
   // --- 知识图谱轮询逻辑 ---
   const fetchGraphData = async () => {
-    // 只有在开启图谱模式时才去轮询数据
     if (!useGraph && renderMode === 'graph') return; 
 
     try {
@@ -138,7 +138,7 @@ export default function Home() {
         clearInterval(graphPollingInterval.current);
       }
     };
-  }, [renderMode, useGraph]); // 监听 useGraph 变化
+  }, [renderMode, useGraph]); 
   // -----------------------
 
   const handleErrorChange = (error, hasErr) => {
@@ -166,12 +166,13 @@ export default function Home() {
     setStreamingContent("");
 
     try {
-      // 【修改】传入 useGraph 参数
+      // 【修改】传入 useGraph 和 useFileContext
       const { mermaidCode: generatedCode, error } = await generateMermaidFromText(
         inputText,
         diagramType,
         showRealtime ? handleStreamChunk : null,
-        useGraph 
+        useGraph,
+        useFileContext // 【新增】
       );
 
       if (error) {
@@ -225,28 +226,41 @@ export default function Home() {
 
               <Tabs value={leftTab} onValueChange={setLeftTab} className="flex flex-col h-full">
                 <div className="flex flex-col gap-2 pb-2">
-                  {/* 第一行：Tabs */}
-                  <div className="flex justify-between items-center">
+                  {/* 第一行：Tabs 和 全局开关 */}
+                  <div className="flex justify-between items-start flex-wrap gap-2">
                     <TabsList className="h-9">
                       <TabsTrigger value="manual">手动输入</TabsTrigger>
                       <TabsTrigger value="file">文件上传</TabsTrigger>
                       <TabsTrigger value="history">历史记录</TabsTrigger>
                     </TabsList>
+                  </div>
 
-                    {/* 【新增】知识图谱模式开关 */}
-                    <div className="flex items-center space-x-2 bg-muted/50 px-3 py-1.5 rounded-md border">
-                        {useGraph ? 
-                            <BrainCircuit className="h-4 w-4 text-primary" /> : 
-                            <FileText className="h-4 w-4 text-muted-foreground" />
-                        }
-                        <Switch id="graph-mode" checked={useGraph} onCheckedChange={setUseGraph} />
-                        <Label htmlFor="graph-mode" className="text-xs font-medium cursor-pointer">
-                            {useGraph ? "知识图谱 RAG" : "直接文档阅读"}
-                        </Label>
+                  {/* 第二行：生成配置开关组 */}
+                  <div className="flex flex-wrap gap-2 py-1">
+                    {/* 文件依赖开关 */}
+                    <div className="flex items-center space-x-2 bg-muted/50 px-3 py-1.5 rounded-md border flex-1 min-w-[140px] justify-between">
+                        <div className="flex items-center gap-2">
+                           <FileSearch className="h-4 w-4 text-muted-foreground" />
+                           <Label htmlFor="file-ctx-mode" className="text-xs font-medium cursor-pointer">
+                               依赖文件
+                           </Label>
+                        </div>
+                        <Switch id="file-ctx-mode" checked={useFileContext} onCheckedChange={setUseFileContext} className="scale-75" />
+                    </div>
+
+                    {/* 知识图谱开关 (只有开启依赖文件时才有效) */}
+                    <div className={`flex items-center space-x-2 bg-muted/50 px-3 py-1.5 rounded-md border flex-1 min-w-[140px] justify-between transition-opacity ${!useFileContext ? 'opacity-50 pointer-events-none' : ''}`}>
+                        <div className="flex items-center gap-2">
+                           {useGraph ? <BrainCircuit className="h-4 w-4 text-primary" /> : <FileText className="h-4 w-4 text-muted-foreground" />}
+                           <Label htmlFor="graph-mode" className="text-xs font-medium cursor-pointer">
+                               {useGraph ? "RAG图谱" : "文档直读"}
+                           </Label>
+                        </div>
+                        <Switch id="graph-mode" checked={useGraph} onCheckedChange={setUseGraph} className="scale-75" />
                     </div>
                   </div>
 
-                  {/* 第二行：Model & Type Selectors */}
+                  {/* 第三行：Model & Type Selectors */}
                   <div className="flex items-center gap-2 flex-wrap">
                     <ModelSelector onModelChange={handleModelChange} />
                     <div className="flex-1 min-w-0">
@@ -258,7 +272,7 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div className="flex-1 flex flex-col overflow-hidden mt-2">
+                <div className="flex-1 flex flex-col overflow-hidden mt-1">
                   <div className="h-28 md:h-40 flex-shrink-0">
                     <TabsContent value="manual" className="h-full mt-0">
                       <TextInput
@@ -268,7 +282,7 @@ export default function Home() {
                       />
                     </TabsContent>
                     <TabsContent value="file" className="h-full mt-0">
-                      {/* 【修改】传入 autoBuild 参数，由 useGraph 控制 */}
+                      {/* 传入 autoBuild 参数 */}
                       <FileUpload autoBuild={useGraph} />
                     </TabsContent>
                     <TabsContent value="history" className="h-full mt-0">
@@ -292,7 +306,7 @@ export default function Home() {
                       {isGenerating ? (
                         <>
                           <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-background mr-2"></div>
-                          {useGraph ? "检索并生成..." : "读取并生成..."}
+                          {useFileContext ? (useGraph ? "检索图谱并生成..." : "读取文档并生成...") : "仅根据文本生成..."}
                         </>
                       ) : (
                         <>
@@ -301,11 +315,12 @@ export default function Home() {
                         </>
                       )}
                     </Button>
-                    <div className="flex items-center gap-2 px-2">
-                       <span className="text-xs text-muted-foreground">流式</span>
+                    <div className="flex items-center gap-2 px-2 bg-muted/30 rounded border h-10">
+                       <span className="text-xs text-muted-foreground whitespace-nowrap">流式</span>
                        <Switch
                         checked={showRealtime}
                         onCheckedChange={setShowRealtime}
+                        className="scale-75"
                        />
                     </div>
                   </div>
@@ -352,8 +367,8 @@ export default function Home() {
                       size="sm"
                       onClick={() => setRenderMode("graph")}
                       className="h-8 text-xs px-3 gap-1"
-                      disabled={!useGraph} // 如果关闭了图谱模式，禁用图谱视图
-                      title={!useGraph ? "图谱模式已关闭" : "查看知识图谱"}
+                      disabled={!useGraph || !useFileContext} // 如果关闭了图谱模式或不依赖文件，禁用图谱视图
+                      title={!useGraph || !useFileContext ? "需开启'依赖文件'和'RAG图谱'模式" : "查看知识图谱"}
                    >
                      <Network className="h-3 w-3" />
                      知识图谱
@@ -361,7 +376,7 @@ export default function Home() {
                 </div>
                 
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    {renderMode === 'graph' && useGraph && (
+                    {renderMode === 'graph' && useGraph && useFileContext && (
                         <span className="flex items-center animate-pulse">
                             <span className="h-2 w-2 rounded-full bg-green-500 mr-2"></span>
                             Live Sync
@@ -384,16 +399,16 @@ export default function Home() {
                     onErrorChange={handleErrorChange}
                   />
                 )}
-                {renderMode === "graph" && useGraph && (
+                {renderMode === "graph" && useGraph && useFileContext && (
                   <KnowledgeGraphRenderer 
                     graphData={graphData}
                   />
                 )}
-                {renderMode === "graph" && !useGraph && (
+                {renderMode === "graph" && (!useGraph || !useFileContext) && (
                     <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
                         <Network className="h-12 w-12 mb-4 opacity-20" />
-                        <p>当前处于“直接文档阅读”模式</p>
-                        <p className="text-sm mt-2">请开启“知识图谱 RAG”以查看图谱可视化</p>
+                        <p>知识图谱可视化不可用</p>
+                        <p className="text-sm mt-2">请确保已开启“依赖文件”和“RAG图谱”模式</p>
                     </div>
                 )}
               </div>

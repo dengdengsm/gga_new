@@ -2,7 +2,7 @@ import { cleanText } from "./utils";
 import { getAIConfig, getSavedPassword, getSelectedModel } from "./config-service";
 
 // 定义后端地址常量
-const BACKEND_URL = "http://localhost:8000";
+const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 /**
  * Sends text to AI API for processing and returns the generated Mermaid code
@@ -10,9 +10,10 @@ const BACKEND_URL = "http://localhost:8000";
  * @param {string} text - User query
  * @param {string} diagramType - Type of diagram
  * @param {function} onChunk - Streaming callback
- * @param {boolean} useGraph - 【新增】是否使用知识图谱模式
+ * @param {boolean} useGraph - 是否使用知识图谱模式
+ * @param {boolean} useFileContext - 【新增】是否依赖已上传文件作为上下文
  */
-export async function generateMermaidFromText(text, diagramType = "auto", onChunk = null, useGraph = true) {
+export async function generateMermaidFromText(text, diagramType = "auto", onChunk = null, useGraph = true, useFileContext = true) {
   if (!text) {
     return { mermaidCode: "", error: "请提供文本内容" };
   }
@@ -37,7 +38,8 @@ export async function generateMermaidFromText(text, diagramType = "auto", onChun
         aiConfig,
         accessPassword,
         selectedModel,
-        useGraph // 【新增】传递给后端
+        useGraph,
+        useFileContext // 【新增】传递参数给后端
       }),
     });
 
