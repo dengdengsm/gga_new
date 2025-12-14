@@ -70,5 +70,9 @@
   {
     "q": "Parse error: Expecting 'SEMI', 'NEWLINE', 'SPACE', 'EOF', 'SHAPE_DATA', 'START_LINK', 'LINK', 'LINK_ID', got 'STYLE_SEPARATOR'",
     "a": "Ensure proper syntax and spacing in graph definitions, avoiding misplaced or unexpected separators like ':::'."
+  },
+  {
+    "q": "Parse error: Expecting 'taskData', got 'NL'",
+    "a": "Ensure task definitions follow the correct syntax without unexpected line breaks or missing data."
   }
 ]

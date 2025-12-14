@@ -44,7 +44,7 @@ class RouterAgent:
 
         # 1. RAG 检索：看看以前有没有画过类似的图
         # search() 返回的是 list of strings (即 'a'/设计思路)
-        retrieved_experiences = self.rag.search(query=user_target, top_k=10)
+        retrieved_experiences = self.rag.search_score(query=user_target, top_k=10)
         
         # ================== 🐛 DEBUG LOG START ==================
         # 既然你觉得它选得离谱，我们就把案发现场保留下来
@@ -88,7 +88,7 @@ class RouterAgent:
                 "### 🧠 CRITICAL REFERENCE (RAG MEMORY)\n"
                 "The following are **SUCCESSFUL PAST STRATEGIES** retrieved from your memory bank.\n"
                 "**INSTRUCTION**: You MUST prioritized these strategies. If a past case used a specific diagram type for a similar scenario, **COPY THAT CHOICE**.\n"
-                "**Attention**: You should choose the most popular strategies, for that is the most accepted, too."
+                "**Attention**: Pay more attention to the most popular strategies, for that is the most accepted, too. But select the type by your wisdom. "
                 "--------------------------------------------------\n"
             )
             # 拼装：指令 + 具体的经验列表
@@ -99,7 +99,7 @@ class RouterAgent:
         system_prompt = f"{base_prompt}\n\n{experience_section}"
         
         # 3. LLM 决策
-        messages = [{"role": "user", "content": f"[User Requirement]:\n{user_content}"}]
+        messages = [{"role": "user", "content": f"[User Requirement]:\n{user_target}\n\n[Context Content]:\n{user_content}"}]
         
         try:
             response_text = self.llm.chat(messages, system_prompt=system_prompt, json_mode=True)
@@ -127,21 +127,39 @@ class RouterAgent:
         print(f"⚡ Router 进入定向分析模式 -> 目标类型: {specific_type}")
         
         # 1. 依然尝试检索相关经验 (可能包含针对该特定图表的画法技巧)
-        retrieved_experiences = self.rag.search(query=user_target, top_k=5)
+        retrieved_experiences = self.rag.search_score(query=user_target, top_k=5)
         experience_context = ""
         if retrieved_experiences:
-             experience_context = "\n### Past Design Patterns:\n" + "\n".join([f"- {exp}" for exp in retrieved_experiences])
+            print(f"   [RAG] 联想到 {len(retrieved_experiences)} 条相关设计思路")
+            experience_context = "\n### Reference Design Strategies (From Past Success):\n"
+            for idx, exp in enumerate(retrieved_experiences):
+                experience_context += f"{idx+1}. {exp}\n"
+        else:
+            print("   [RAG] 无相关经验，使用通用策略。")
+        if retrieved_experiences:
+            # 如果有经验，就加一段“狠话”
+            experience_instruction = (
+                "\n\n"
+                "### 🧠 CRITICAL REFERENCE (RAG MEMORY)\n"
+                "The following are **SUCCESSFUL PAST STRATEGIES** retrieved from your memory bank.\n"
+                "**INSTRUCTION**: You MUST prioritized these strategies. If a past case used a specific diagram type for a similar scenario, **COPY THAT CHOICE**.\n"
+                f"**Attention**: Pay more attenntion to the {specific_type}"
+                "--------------------------------------------------\n"
+            )
+            # 拼装：指令 + 具体的经验列表
+            experience_section = experience_instruction + experience_context
+        else:
+            experience_section = ""
 
         # 2. 构造定向 Prompt
         system_prompt = (
             f"You are a Visualization Expert. The user has EXPLICITLY requested a '{specific_type}' diagram.\n"
-            f"Your task is NOT to choose a diagram type, but to ANALYZE the content specifically for a '{specific_type}'.\n\n"
             f"### INSTRUCTIONS:\n"
             f"1. Analyze the [User Content] and [User Requirement].\n"
             f"2. Extract the key entities, relationships, or steps needed to build a high-quality {specific_type}.\n"
             f"3. Do NOT suggest other diagram types.\n"
             f"4. Output JSON strictly.\n\n"
-            f"{experience_context}\n\n"
+            f"{experience_section}\n\n"
             f"### OUTPUT FORMAT (JSON):\n"
             f"{{\n"
             f"  \"reason\": \"User manually selected {specific_type}.\",\n"

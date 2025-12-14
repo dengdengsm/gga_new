@@ -231,3 +231,74 @@ class LocalKnowledgeBase:
             except: pass
 
         return unique_docs[:top_k]
+    
+    def search_score(self, query: str, top_k: int = 3, score_threshold: float = 0.4) -> List[str]:
+        """
+        [修正版] 智能去重 + 阈值截断检索
+        :param score_threshold: 相似度阈值 (0-1)，低于此值的经验将被忽略。建议 0.35 ~ 0.5 之间。
+        """
+        # 1. 向量化
+        query_vec = self.encoder.encode([query], normalize_embeddings=True).tolist()
+        
+        # 2. 过采样检索 (为了在过滤和去重后还能凑够 top_k，这里多取一些)
+        results = self.collection.query(
+            query_embeddings=query_vec,
+            n_results=top_k * 5, 
+            # 必须显式请求 distances
+            include=["documents", "metadatas", "distances"] 
+        )
+        
+        found_docs = results['documents'][0] if results['documents'] else []
+        found_ids = results['ids'][0] if results['ids'] else []
+        found_metadatas = results['metadatas'][0] if results['metadatas'] else []
+        # 获取距离列表
+        found_distances = results['distances'][0] if results['distances'] else []
+        
+        unique_docs = []
+        seen_hashes = set()
+        ids_to_delete = [] 
+
+        # 3. 智能去重 + 阈值过滤遍历
+        for i in range(len(found_docs)):
+            doc = found_docs[i]
+            doc_id = found_ids[i]
+            meta = found_metadatas[i] if found_metadatas else {}
+            dist = found_distances[i]
+            
+            # --- [核心修改] 相似度阈值判断 ---
+            # Chroma 的 Cosine Distance 范围是 0~2 (0表示完全一样)
+            # 相似度 = 1 - 距离
+            similarity = 1.0 - dist
+            
+            if similarity < score_threshold:
+                # 因为 Chroma 返回的结果是按相似度排序的 (距离由小到大)
+                # 如果当前这条已经低于阈值，后面的肯定更低，直接结束循环
+                # print(f"   [RAG过滤] 相似度 {similarity:.4f} 低于阈值 {score_threshold}，截断停止。")
+                break
+
+            # --- 下面是原本的去重逻辑 ---
+            if meta and "original_q" in meta:
+                unique_key = meta["original_q"].strip()
+            else:
+                unique_key = doc.strip()
+                
+            import hashlib
+            item_hash = hashlib.md5(unique_key.encode('utf-8')).hexdigest()
+            
+            if item_hash not in seen_hashes:
+                unique_docs.append(doc)
+                seen_hashes.add(item_hash)
+            else:
+                ids_to_delete.append(doc_id)
+            
+            # 凑够了就停
+            if len(unique_docs) >= top_k:
+                break
+
+        # 4. 执行清理 (保持不变)
+        if ids_to_delete:
+            try:
+                self.collection.delete(ids=ids_to_delete)
+            except: pass
+
+        return unique_docs
