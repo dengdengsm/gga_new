@@ -8,12 +8,20 @@ import networkx as nx
 import streamlit as st
 import streamlit.components.v1 as components
 from pyvis.network import Network
-
+import re
 # --- 配置 ---
 TEMP_UPLOAD_DIR = "./.temp_uploaded_files"
 
 def quick_validate_mermaid(code: str) -> dict:
     """验证 Mermaid 代码"""
+    if re.search(r'classDef\s+subgraph\b', code, re.IGNORECASE):
+        error_msg = (
+            "Syntax Error (Hard Check): "
+            "'subgraph' is a reserved keyword and cannot be used as a class name.\n"
+            "❌ Bad: classDef subgraph fill:#f9f...\n"
+            "✅ Fix: Rename it to something else (e.g., classDef subgraphStyle ...)"
+        )
+        return {"valid": False, "error": error_msg}
     try:
         response = requests.post(
             "https://kroki.io/mermaid/svg",
