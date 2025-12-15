@@ -82,5 +82,9 @@
   {
     "q": "Parse error: Expecting 'SPACELINE', 'NL', 'EOF', got 'NODE_ID'",
     "a": "Do not use HTML tags or special formatting within node labels; structure content as nested nodes instead."
+  },
+  {
+    "q": "Parse error expecting specific tokens, got 'PS'",
+    "a": "Ensure all syntax elements in diagrams are valid and match expected token types, avoiding unsupported or malformed constructs."
   }
 ]

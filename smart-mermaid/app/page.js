@@ -4,20 +4,19 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { Wand2, Network, FolderOpen, BrainCircuit, FileText, FileSearch } from "lucide-react"; // 引入图标
+import { Wand2, Network } from "lucide-react"; 
 import { Header } from "@/components/header";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { TextInput } from "@/components/text-input";
 import { FileUpload } from "@/components/file-upload";
 import { DiagramTypeSelector } from "@/components/diagram-type-selector";
-import { ModelSelector } from "@/components/model-selector";
+// import { ModelSelector } from "@/components/model-selector"; // 已移除
 import { MermaidEditor } from "@/components/mermaid-editor";
 import { MermaidRenderer } from "@/components/mermaid-renderer";
+import { GenerationControls } from "@/components/generation-controls"; // 引入新组件
 import { generateMermaidFromText } from "@/lib/ai-service";
 import { isWithinCharLimit } from "@/lib/utils";
 import { isPasswordVerified, hasCustomAIConfig } from "@/lib/config-service";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
 import { HistoryList } from "@/components/history-list";
 import { getHistory, addHistoryEntry } from "@/lib/history-service";
 import dynamic from "next/dynamic";
@@ -35,9 +34,10 @@ export default function Home() {
   const [passwordVerified, setPasswordVerified] = useState(false);
   const [hasCustomConfig, setHasCustomConfig] = useState(false);
 
-  // 状态控制开关
-  const [useGraph, setUseGraph] = useState(false); // 知识图谱模式
-  const [useFileContext, setUseFileContext] = useState(true); // 【新增】是否依赖文件上下文
+  // --- 生成策略状态 (由 GenerationControls 控制) ---
+  const [useGraph, setUseGraph] = useState(false); 
+  const [useFileContext, setUseFileContext] = useState(true); 
+  const [richness, setRichness] = useState(0.5); // 新增：丰富度参数
 
   const [renderMode, setRenderMode] = useState("mermaid");
   
@@ -60,7 +60,6 @@ export default function Home() {
     setHistoryEntries(getHistory());
   }, []);
 
-  // 【新增】刷新历史记录的函数，传递给子组件使用
   const refreshHistory = async () => {
     const history = await getHistory();
     setHistoryEntries(history);
@@ -138,16 +137,15 @@ export default function Home() {
       }
     };
   }, [renderMode, useGraph]); 
-  // -----------------------
 
   const handleErrorChange = (error, hasErr) => {
     setErrorMessage(error);
     setHasError(hasErr);
   };
 
-  const handleModelChange = useCallback((modelId) => {
-    console.log('Selected model:', modelId);
-  }, []);
+  // const handleModelChange = useCallback((modelId) => {
+  //   console.log('Selected model:', modelId);
+  // }, []);
 
   const handleGenerateClick = async () => {
     if (!inputText.trim()) {
@@ -163,14 +161,14 @@ export default function Home() {
     setIsGenerating(true);
 
     try {
-      // 传入 useGraph 和 useFileContext
-      // onChunk 设为 null，因为已移除流式功能
+      // 传递所有控制参数，包括 richness
       const { mermaidCode: generatedCode, error } = await generateMermaidFromText(
         inputText,
         diagramType,
         null, 
         useGraph,
-        useFileContext
+        useFileContext,
+        richness // 传递丰富度
       );
 
       if (error) {
@@ -190,7 +188,6 @@ export default function Home() {
           code: generatedCode,
           diagramType
         });
-        // 使用封装好的刷新函数
         setTimeout(refreshHistory, 100);
       } catch (e) {
         console.error("Failed to save history:", e);
@@ -221,55 +218,39 @@ export default function Home() {
             <div className="col-span-1 flex flex-col h-full overflow-hidden">
 
               <Tabs value={leftTab} onValueChange={setLeftTab} className="flex flex-col h-full">
-                <div className="flex flex-col gap-2 pb-2">
-                  {/* 第一行：Tabs 和 全局开关 */}
-                  <div className="flex justify-between items-start flex-wrap gap-2">
+                
+                {/* --- 顶部工具栏 (整合了 Tabs 和 设置) --- */}
+                <div className="flex justify-between items-center pb-3 gap-2 flex-wrap">
+                    {/* 左侧：Tabs */}
                     <TabsList className="h-9">
                       <TabsTrigger value="manual">手动输入</TabsTrigger>
                       <TabsTrigger value="file">文件上传</TabsTrigger>
                       <TabsTrigger value="history">历史记录</TabsTrigger>
                     </TabsList>
-                  </div>
 
-                  {/* 第二行：生成配置开关组 */}
-                  <div className="flex flex-wrap gap-2 py-1">
-                    {/* 文件依赖开关 */}
-                    <div className="flex items-center space-x-2 bg-muted/50 px-3 py-1.5 rounded-md border flex-1 min-w-[140px] justify-between">
-                        <div className="flex items-center gap-2">
-                           <FileSearch className="h-4 w-4 text-muted-foreground" />
-                           <Label htmlFor="file-ctx-mode" className="text-xs font-medium cursor-pointer">
-                               依赖文件
-                           </Label>
-                        </div>
-                        <Switch id="file-ctx-mode" checked={useFileContext} onCheckedChange={setUseFileContext} className="scale-75" />
+                    {/* 右侧：图表类型 + 生成策略设置 */}
+                    <div className="flex items-center gap-2 flex-1 justify-end min-w-0">
+                       <div className="w-[140px] flex-shrink-0">
+                          <DiagramTypeSelector
+                            value={diagramType}
+                            onChange={handleDiagramTypeChange}
+                          />
+                       </div>
+                       
+                       <GenerationControls 
+                          useFileContext={useFileContext}
+                          setUseFileContext={setUseFileContext}
+                          useGraph={useGraph}
+                          setUseGraph={setUseGraph}
+                          richness={richness}
+                          setRichness={setRichness}
+                       />
                     </div>
-
-                    {/* 知识图谱开关 (只有开启依赖文件时才有效) */}
-                    <div className={`flex items-center space-x-2 bg-muted/50 px-3 py-1.5 rounded-md border flex-1 min-w-[140px] justify-between transition-opacity ${!useFileContext ? 'opacity-50 pointer-events-none' : ''}`}>
-                        <div className="flex items-center gap-2">
-                           {useGraph ? <BrainCircuit className="h-4 w-4 text-primary" /> : <FileText className="h-4 w-4 text-muted-foreground" />}
-                           <Label htmlFor="graph-mode" className="text-xs font-medium cursor-pointer">
-                               {useGraph ? "RAG图谱" : "文档直读"}
-                           </Label>
-                        </div>
-                        <Switch id="graph-mode" checked={useGraph} onCheckedChange={setUseGraph} className="scale-75" />
-                    </div>
-                  </div>
-
-                  {/* 第三行：Model & Type Selectors */}
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <ModelSelector onModelChange={handleModelChange} />
-                    <div className="flex-1 min-w-0">
-                      <DiagramTypeSelector
-                        value={diagramType}
-                        onChange={handleDiagramTypeChange}
-                      />
-                    </div>
-                  </div>
                 </div>
 
-                <div className="flex-1 flex flex-col overflow-hidden mt-1">
-                  <div className="h-28 md:h-40 flex-shrink-0">
+                {/* --- 下方内容区域 --- */}
+                <div className="flex-1 flex flex-col overflow-hidden mt-0">
+                  <div className="h-40 md:h-52 flex-shrink-0">
                     <TabsContent value="manual" className="h-full mt-0">
                       <TextInput
                         value={inputText}
@@ -278,7 +259,6 @@ export default function Home() {
                       />
                     </TabsContent>
                     <TabsContent value="file" className="h-full mt-0">
-                      {/* 传入 autoBuild 参数 */}
                       <FileUpload autoBuild={useGraph} />
                     </TabsContent>
                     <TabsContent value="history" className="h-full mt-0">
@@ -293,11 +273,11 @@ export default function Home() {
                     </TabsContent>
                   </div>
 
-                  <div className="h-16 flex items-center gap-2 flex-shrink-0">
+                  <div className="h-16 flex items-center gap-2 flex-shrink-0 pt-2">
                     <Button
                       onClick={handleGenerateClick}
                       disabled={isGenerating || !inputText.trim() || !isWithinCharLimit(inputText, maxChars)}
-                      className="h-10 flex-1"
+                      className="h-10 flex-1 shadow-sm"
                     >
                       {isGenerating ? (
                         <>
@@ -313,13 +293,13 @@ export default function Home() {
                     </Button>
                   </div>
 
-                  <div className="flex-1 min-h-0">
+                  <div className="flex-1 min-h-0 pt-2">
                     <MermaidEditor
                       code={mermaidCode}
                       onChange={handleMermaidCodeChange}
                       errorMessage={errorMessage}
                       hasError={hasError}
-                      onHistoryChange={refreshHistory} // 【新增】传递刷新回调
+                      onHistoryChange={refreshHistory}
                     />
                   </div>
                 </div>
@@ -352,7 +332,7 @@ export default function Home() {
                       size="sm"
                       onClick={() => setRenderMode("graph")}
                       className="h-8 text-xs px-3 gap-1"
-                      disabled={!useGraph || !useFileContext} // 如果关闭了图谱模式或不依赖文件，禁用图谱视图
+                      disabled={!useGraph || !useFileContext} 
                       title={!useGraph || !useFileContext ? "需开启'依赖文件'和'RAG图谱'模式" : "查看知识图谱"}
                    >
                      <Network className="h-3 w-3" />
@@ -370,7 +350,7 @@ export default function Home() {
                 </div>
               </div>
 
-              <div className="flex-1 mt-4 overflow-y-auto min-h-[600px] border rounded-lg bg-background">
+              <div className="flex-1 mt-4 overflow-y-auto min-h-[600px] border rounded-lg bg-background shadow-sm">
                 {renderMode === "mermaid" && (
                   <MermaidRenderer
                     mermaidCode={mermaidCode}
@@ -402,7 +382,7 @@ export default function Home() {
         </div>
       </main>
 
-      <footer className="h-12 border-t flex items-center justify-center flex-shrink-0">
+      <footer className="h-12 border-t flex items-center justify-center flex-shrink-0 bg-muted/20">
         <div className="text-center text-sm text-muted-foreground">
           AI 驱动的文本转 Mermaid 图表 Web 应用 &copy; {new Date().getFullYear()}
         </div>

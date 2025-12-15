@@ -39,7 +39,7 @@ class CodeGenAgent:
             content = f.read().strip()
             return content
 
-    def generate_code(self, input_text: str, prompt_file: str = "flowchart.md") -> str:
+    def generate_code(self, input_text: str, prompt_file: str = "flowchart.md",richness:float = 0.5) -> str:
         """
         【通用生成接口】
         根据传入的 prompt_file 不同，生成不同类型的代码 (流程图、思维导图、Python绘图等)
@@ -50,6 +50,30 @@ class CodeGenAgent:
         # 1. 加载 Prompt
         system_prompt = self._load_system_prompt(prompt_file)
         
+        richness_requirement = f"""
+            \n\n
+            ### 🎚️ DIAGRAM RICHNESS CONTROL (Target Level: {richness})
+            The user has specified a richness parameter (0.0 - 1.0) to control the detail density of the generated diagram.
+            Current Richness: **{richness}**
+
+            **You MUST adapt your code generation strategy based on this value:**
+
+            * **Low Richness (0.0 - 0.3) -> "High-Level Summary"**
+                - **Focus**: Only show the main business flow (Happy Path).
+                - **Contains NO More Than Ten Nodes**
+
+            * **Medium Richness (0.4 - 0.7) -> "Standard Logic"**
+                - **Focus**: Clear structural representation of the algorithm.
+                - **Contains No More Than Twenty Nodes**
+
+            * **High Richness (0.8 - 1.0) -> "Source Code Fidelity"**
+                - **Focus**: A debugger-level view of the execution flow.
+                - **Contains ENOUGH information in the Nodes**
+
+            **Constraint**: Your output Mermaid code complexity MUST strictly match the richness level of **{richness}**.
+            """
+        
+        system_prompt += richness_requirement
         # 2. 构建消息
         messages: List[Message] = [
             {"role": "user", "content": f"[Requirements or content]:\n{input_text}"}

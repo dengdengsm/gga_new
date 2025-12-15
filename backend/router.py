@@ -7,7 +7,7 @@ from typing import Dict, Any, List
 class RouterAgent:
     def __init__(self, 
                  model_name: str = "deepseek-reasoner", 
-                 learn_mode: bool = True,
+                 learn_mode: bool = False,
                  experience_file: str = "./knowledge/experience/router.json"):
         
         print(f"--- 初始化 RouterAgent (智能进化版) [模型: {model_name}] ---")
@@ -36,72 +36,79 @@ class RouterAgent:
         except FileNotFoundError:
             return ""
 
-    def route_and_analyze(self, user_content: str, user_target:str = "") -> Dict[str, Any]:
+    def route_and_analyze(self, user_content: str, user_target:str = "",) -> Dict[str, Any]:
         """
         核心功能：分析需求 -> 检索经验 -> 制定策略
+        (已重构：内置 Prompt，不再依赖外部文件，统一管理参数)
         """
         print(f"⚡ Router 正在分析需求 (学习模式: {'开启' if self.learn_mode else '关闭'})...")
 
         # 1. RAG 检索：看看以前有没有画过类似的图
         # search() 返回的是 list of strings (即 'a'/设计思路)
         retrieved_experiences = self.rag.search_score(query=user_target, top_k=10)
-        
-        # ================== 🐛 DEBUG LOG START ==================
-        # 既然你觉得它选得离谱，我们就把案发现场保留下来
-        debug_info = {
-            "search_query": user_target,
-            "retrieved_count": len(retrieved_experiences),
-            "retrieved_experiences": retrieved_experiences
-        }
-        
-        debug_file = "debug_router_experiences.json"
-        try:
-            with open(debug_file, "w", encoding="utf-8") as f:
-                json.dump(debug_info, f, ensure_ascii=False, indent=2)
-            print(f"🐛 [DEBUG] 检索结果已导出至: {debug_file} (请检查到底是谁在误导Router)")
-        except Exception as e:
-            print(f"🐛 [DEBUG] 导出失败: {e}")
-        # ================== 🐛 DEBUG LOG END ====================
-
-        experience_context = ""
+     
+        # 2. 构建经验上下文 (Dynamic RAG Section)
+        experience_section = ""
         if retrieved_experiences:
             print(f"   [RAG] 联想到 {len(retrieved_experiences)} 条相关设计思路")
-            experience_context = "\n### Reference Design Strategies (From Past Success):\n"
-            for idx, exp in enumerate(retrieved_experiences):
-                experience_context += f"{idx+1}. {exp}\n"
-        else:
-            print("   [RAG] 无相关经验，使用通用策略。")
-
-        # 2. 构造 Prompt
-        # 如果有外部文件则加载，否则使用内置默认
-        base_prompt = self._load_prompt("./prompt/router/router.md")
-        if not base_prompt:
-            base_prompt = (
-                "You are a Visualization Architect. Analyze the input content.\n"
-                "Output JSON: {\"reason\": \"...\", \"target_prompt_file\": \"...\", \"analysis_content\": \"...\"}"
-            )
-
-        base_prompt += "\n**You should analyze the content according to the user's requirement**"
-        # --- 核心修改：在代码里动态注入“强制参考指令” ---
-        if retrieved_experiences:
-            # 如果有经验，就加一段“狠话”
-            experience_instruction = (
+            
+            # 拼接具体经验列表
+            context_list = "\n".join([f"{idx+1}. {exp}" for idx, exp in enumerate(retrieved_experiences)])
+            
+            # 构造经验指令块
+            experience_section = (
                 "\n\n"
                 "### 🧠 CRITICAL REFERENCE (RAG MEMORY)\n"
                 "The following are **SUCCESSFUL PAST STRATEGIES** retrieved from your memory bank.\n"
                 "**INSTRUCTION**: You MUST prioritized these strategies. If a past case used a specific diagram type for a similar scenario, **COPY THAT CHOICE**.\n"
                 "**Attention**: Pay more attention to the most popular strategies, for that is the most accepted, too.  "
-                f"**The diagram type you choose should be suitable for the user's requirement: **"
+                "**The diagram type you choose should be suitable for the user's requirement:**\n"
                 "--------------------------------------------------\n"
+                f"{context_list}\n"
             )
-            # 拼装：指令 + 具体的经验列表
-            experience_section = experience_instruction + experience_context
         else:
-            experience_section = ""
-        # 将经验注入 Prompt
-        system_prompt = f"{base_prompt}\n\n{experience_section}"
+            print("   [RAG] 无相关经验，使用通用策略。")
+
         
-        # 3. LLM 决策
+        # 3. 构造完整 System Prompt (原 router.md + 动态逻辑)
+        # 包含了图表类型映射表和输出格式要求
+        system_prompt = (
+            "You are an intelligent **Visualization Orchestrator**.\n"
+            "Your goal is to select the BEST Mermaid diagram type based on the user's request.\n\n"
+            
+            "### 1. Diagram Type Menu (Strict Mapping)\n"
+            "Select the filename strictly from this list. Do NOT invent new filenames.\n\n"
+            
+            "**Structure **:\n"
+            "- `flowchart.md`: Logic flows, algorithms, process steps. (Most Common)\n"
+            "- `architecture.md`: Cloud/System high-level architecture.\n"
+            "- `classDiagram.md`: OOP classes, data structures.\n"
+            "- `entityRelationshipDiagram.md`: Database schemas (ERD).\n"
+            "- `block.md`: Hardware layouts or simple block structures.\n\n"
+            
+            "**Behavior **:\n"
+            "- `sequenceDiagram.md`: Interaction between services/actors over time.\n"
+            "- `stateDiagram.md`: Lifecycle states, status transitions.\n"
+            "- `userJourney.md`: User workflow steps.\n\n"
+            
+            "**Project & Data **:\n"
+            "- `gantt.md`, `timeline.md`, `gitgraph.md`, `mindmap.md`\n"
+            "- `pie.md`, `xyChart.md`, `quadrantChart.md`\n\n"
+            f"{experience_section}\n"
+            "**You should analyze the content according to the user's requirement**\n"
+            "**You should contain as more details as you can in your output**\n"
+            "### 2. Output Format (JSON Only)\n"
+            "Output a SINGLE JSON object:\n"
+            "{\n"
+            "  \"reason\": \"Cite the specific RAG reference if used.\",\n"
+            "  \"target_prompt_file\": \"filename.md\",\n"
+            "  \"analysis_content\": \"Structured summary for the coder.\"\n"
+            "}\n\n"
+            
+            
+        )
+        
+        # 4. LLM 决策
         messages = [{"role": "user", "content": f"[User Requirement]:\n{user_target}\n\n[Context Content]:\n{user_content}"}]
         
         try:
@@ -127,8 +134,7 @@ class RouterAgent:
         【新增】定向分析模式：当用户明确指定图表类型时调用
         跳过选型步骤，直接生成针对该图表的分析内容。
         """
-        print(f"⚡ Router 进入定向分析模式 -> 目标类型: {specific_type}")
-        
+        print(f"⚡ Router 进入定向分析模式 -> 目标类型: {specific_type}\n")
         # 1. 依然尝试检索相关经验 (可能包含针对该特定图表的画法技巧)
         retrieved_experiences = self.rag.search_score(query=user_target, top_k=5)
         experience_context = ""
@@ -152,7 +158,6 @@ class RouterAgent:
             experience_section = experience_instruction + experience_context
         else:
             experience_section = ""
-
         # 2. 构造定向 Prompt
         system_prompt = (
             f"You are a Visualization Expert. The user has EXPLICITLY requested a '{specific_type}' diagram.\n"
@@ -161,7 +166,7 @@ class RouterAgent:
             f"2. Extract the key entities, relationships, or steps needed to build a high-quality {specific_type}.\n"
             f"3. Do NOT suggest other diagram types.\n"
             f"4. Output JSON strictly.\n\n"
-            f"{experience_section}\n\n"
+            f"{experience_section}"
             f"### OUTPUT FORMAT (JSON):\n"
             f"{{\n"
             f"  \"reason\": \"User manually selected {specific_type}.\",\n"

@@ -14,7 +14,7 @@ const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
  * @param {boolean} useGraph - 是否使用知识图谱模式
  * @param {boolean} useFileContext - 是否依赖已上传文件作为上下文
  */
-export async function generateMermaidFromText(text, diagramType = "auto", onChunk = null, useGraph = true, useFileContext = true) {
+export async function generateMermaidFromText(text, diagramType = "auto", onChunk = null, useGraph = true, useFileContext = true, richness = 0.5) {
   if (!text) {
     return { mermaidCode: "", error: "请提供文本内容" };
   }
@@ -63,7 +63,8 @@ ${rulesList}
         accessPassword,
         selectedModel,
         useGraph,
-        useFileContext
+        useFileContext,
+        richness
       }),
     });
 

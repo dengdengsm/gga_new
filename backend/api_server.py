@@ -91,6 +91,7 @@ class GenerateRequest(BaseModel):
     aiConfig: Optional[Dict[str, Any]] = None
     useGraph: bool = True 
     useFileContext: bool = True # 是否使用文件上下文
+    richness:float = 0.5
 
 class FixRequest(BaseModel):
     mermaidCode: str
@@ -453,7 +454,7 @@ async def generate_mermaid(request: GenerateRequest):
         
         # 3. 代码生成
         print("   -> 正在生成代码...")
-        initial_code = code_gen_agent.generate_code(logic_analysis, prompt_file=prompt_file)
+        initial_code = code_gen_agent.generate_code(logic_analysis, prompt_file=prompt_file,richness=request.richness)
         
         # 4. 循环修复逻辑 (保持不变)
         current_code = initial_code
