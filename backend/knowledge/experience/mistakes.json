@@ -74,5 +74,9 @@
   {
     "q": "Parse error: Expecting 'taskData', got 'NL'",
     "a": "Ensure task definitions follow the correct syntax without unexpected line breaks or missing data."
+  },
+  {
+    "q": "No such shape",
+    "a": "Ensure all referenced shapes are defined in the diagram before use."
   }
 ]

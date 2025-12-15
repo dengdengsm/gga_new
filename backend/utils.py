@@ -3,14 +3,24 @@ import shutil
 import requests
 import tempfile
 import base64
-import json  # <--- 新增引用
+import json
 import networkx as nx
 import streamlit as st
 import streamlit.components.v1 as components
 from pyvis.network import Network
 import re
+from typing import List, Tuple
+
 # --- 配置 ---
 TEMP_UPLOAD_DIR = "./.temp_uploaded_files"
+
+# 定义被视为“纯文本”的扩展名，这些文件会被合并给 GraphRAG
+TEXT_EXTENSIONS = {
+    '.txt', '.md', '.markdown', 
+    '.py', '.js', '.jsx', '.ts', '.tsx', '.html', '.css', '.json', 
+    '.java', '.c', '.cpp', '.h', '.cs', '.go', '.rs', '.php', '.rb', '.sh', '.yaml', '.yml', '.xml',
+    '.sql', '.ini', '.conf', '.env'
+}
 
 def quick_validate_mermaid(code: str) -> dict:
     """验证 Mermaid 代码"""
@@ -49,6 +59,61 @@ def save_uploaded_files(uploaded_files):
         saved_paths.append(file_path)
     return saved_paths
 
+def preprocess_multi_files(upload_dir: str, project_dir: str) -> Tuple[str, List[str], List[str]]:
+    """
+    处理多文件上传目录：
+    1. 扫描目录下所有文件。
+    2. 分离 '文本类文件' (源码/MD) 和 'Blob类文件' (PDF/图片)。
+    3. 将所有 '文本类文件' 合并为一个大的 'merged_context.md'。
+    
+    Returns:
+        merged_file_path (str): 合并后的 markdown 文件路径 (若无文本文件则为 None)。
+        text_files_list (List[str]): 识别到的文本文件路径列表。
+        blob_files_list (List[str]): 识别到的非文本文件路径列表 (PDF, Images etc.)。
+    """
+    text_files = []
+    blob_files = []
+    
+    if not os.path.exists(upload_dir):
+        return None, [], []
+
+    # 1. 扫描并分类
+    for root, dirs, files in os.walk(upload_dir):
+        for file in files:
+            file_path = os.path.join(root, file)
+            _, ext = os.path.splitext(file)
+            
+            if ext.lower() in TEXT_EXTENSIONS:
+                text_files.append(file_path)
+            else:
+                blob_files.append(file_path)
+
+    merged_file_path = None
+
+    # 2. 合并文本文件
+    if text_files:
+        merged_file_path = os.path.join(project_dir, "merged_context.md")
+        try:
+            with open(merged_file_path, "w", encoding="utf-8") as outfile:
+                outfile.write("# Merged Project Context\n\n")
+                outfile.write(f"> Auto-generated from {len(text_files)} files.\n\n")
+                
+                for tf in text_files:
+                    try:
+                        rel_name = os.path.basename(tf)
+                        with open(tf, "r", encoding="utf-8", errors="ignore") as infile:
+                            content = infile.read()
+                            outfile.write(f"## File: {rel_name}\n")
+                            outfile.write(f"```\n{content}\n```\n\n")
+                            outfile.write("---\n\n")
+                    except Exception as e:
+                        print(f"Error reading {tf}: {e}")
+        except Exception as e:
+            print(f"Error creating merged file: {e}")
+            merged_file_path = None # Fallback
+
+    return merged_file_path, text_files, blob_files
+
 def render_mermaid(code, height=600):
     """
     【最终修复版】渲染 Mermaid (解决 Python f-string 冲突)
@@ -64,16 +129,12 @@ def render_mermaid(code, height=600):
         "look": "handDrawn",      # 确保开启手绘风格
         "securityLevel": "loose",
         "fontFamily": '"Comic Sans MS", "Chalkboard SE", "Comic Neue", sans-serif',
-        # 移除 themeVariables，让 neutral 主题自带的手绘风格生效
-        # "themeVariables": { ... } 
     }
     
     # 3. 将 Python 字典转为 JSON 字符串 (自动处理 True/False -> true/false)
     js_config_str = json.dumps(mermaid_config)
 
     # 4. 构建 HTML
-    # 注意：下面的 HTML 中，只有 {height}, {b64_code}, {js_config_str} 是 Python 变量
-    # 其他 CSS 里的花括号我都用了双括号 {{ }} 转义
     html_code = f"""
     <!DOCTYPE html>
     <html>

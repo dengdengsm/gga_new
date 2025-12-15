@@ -18,7 +18,7 @@ from router import RouterAgent
 from graphrag import LightGraphRAG
 from codez_gen import CodeGenAgent
 from code_revise import CodeReviseAgent
-from utils import quick_validate_mermaid
+from utils import quick_validate_mermaid, preprocess_multi_files
 from document_reader import DocumentAnalyzer
 
 # --- 配置 ---
@@ -141,16 +141,15 @@ def process_upload_background(task_id: str, file_location: str, project_name: st
     time.sleep(2) 
     
     try:
-        tasks[task_id] = {"status": "processing", "message": "正在深度解析内容..."}
-        project_manager.update_file_status(task_id, "processing", "正在深度解析内容...")
+        tasks[task_id] = {"status": "processing", "message": "文件已接收..."}
+        project_manager.update_file_status(task_id, "uploaded", "等待生成时处理")
         
-        print(f"🔄 [Task {task_id}] 开始后台处理: {os.path.basename(file_location)}")
+        print(f"🔄 [Task {task_id}] 文件已就绪: {os.path.basename(file_location)}")
         
-        rag_engine.build_graph(file_location)
+        # 注意：不再此处自动构建图谱，而是推迟到生成阶段统一处理多文件
         
-        tasks[task_id] = {"status": "success", "message": "图谱构建完成"}
-        project_manager.update_file_status(task_id, "success", "图谱构建完成")
-        print(f"✅ [Task {task_id}] 处理完成")
+        tasks[task_id] = {"status": "success", "message": "文件就绪"}
+        project_manager.update_file_status(task_id, "success", "文件就绪")
         
     except Exception as e:
         tasks[task_id] = {"status": "error", "message": str(e)}
@@ -165,7 +164,7 @@ class GenerateRequest(BaseModel):
     diagramType: str = "auto"
     aiConfig: Optional[Dict[str, Any]] = None
     useGraph: bool = True 
-    useFileContext: bool = True # 【新增】是否使用文件上下文 (True: 依赖文件, False: 纯文本)
+    useFileContext: bool = True # 是否使用文件上下文
 
 class FixRequest(BaseModel):
     mermaidCode: str
@@ -350,7 +349,7 @@ async def upload_file(
         print(f"📂 [Upload] 收到文件: {file.filename}, ID: {task_id}, AutoBuild: {autoBuild}")
         
         initial_status = "pending" if autoBuild else "uploaded"
-        initial_msg = "已加入处理队列..." if autoBuild else "文件已保存 (待分析)"
+        initial_msg = "文件等待处理..." if autoBuild else "文件已保存 (待分析)"
         
         tasks[task_id] = {
             "status": initial_status,
@@ -381,7 +380,7 @@ async def upload_file(
         
         return {
             "status": "success", 
-            "message": "文件上传成功" + ("，正在后台分析" if autoBuild else "，等待使用"),
+            "message": "文件上传成功" + ("，已进入处理队列" if autoBuild else "，等待使用"),
             "taskId": task_id,
             "filename": file.filename
         }
@@ -396,69 +395,108 @@ async def get_task_status(task_id: str):
         return {"status": "error", "message": "任务不存在或已过期"}
     return task
 
-# === 核心生成接口 (增强版：支持 useFileContext & DiagramType) ===
+# === 核心生成接口 (增强版：支持多文件分路处理) ===
 @app.post("/api/generate-mermaid")
 async def generate_mermaid(request: GenerateRequest):
     user_query = request.text
     use_graph = request.useGraph
     diagram_type = request.diagramType
-    use_file = request.useFileContext  # 【获取参数】
+    use_file = request.useFileContext
     
-    print(f"\n⚡ [Generate] 收到请求: {user_query[:50]}... (Type: {diagram_type}, File: {use_file}, Graph: {use_graph})")
+    print(f"\n⚡ [Generate] 收到请求: {user_query[:50]}... | Graph: {use_graph} | File: {use_file}")
 
     try:
         context = ""
+        project_dir = project_manager.get_project_dir()
+        upload_dir = os.path.join(project_dir, "uploads")
         
-        # 1. 只有在开启依赖文件时，才去检索上下文
-        if use_file:
-            if use_graph:
-                print("   -> 模式: 知识图谱 RAG")
-                # Lazy Build 逻辑
-                records = project_manager.get_file_records()
-                target_file = next((r for r in records if r.get("status") == "uploaded"), None)
-                
-                if target_file:
-                    print(f"   -> 发现未构建文件: {target_file['filename']}，开始现场构建...")
-                    file_path = target_file.get("location")
-                    if not file_path:
-                         file_path = os.path.join(project_manager.get_project_dir(), "uploads", target_file['filename'])
-                    
-                    if os.path.exists(file_path):
-                        try:
-                            project_manager.update_file_status(target_file['id'], "processing", "生成时自动构建中...")
-                            rag_engine.build_graph(file_path) 
-                            project_manager.update_file_status(target_file['id'], "success", "图谱构建完成")
-                            print("   ✅ 现场构建完成")
-                        except Exception as build_e:
-                            print(f"   ❌ 现场构建失败: {build_e}")
-                            project_manager.update_file_status(target_file['id'], "error", str(build_e))
+        # 1. 预处理文件：自动分类与合并
+        # merged_md: 文本类文件的合并内容路径 (用于 GraphRAG)
+        # text_files: 文本文件列表 (用于 No-Graph 直接读取)
+        # blob_files: 非文本文件列表 (用于 DocumentAnalyzer)
+        merged_md, text_files, blob_files = preprocess_multi_files(upload_dir, project_dir)
+        total_files_count = len(text_files) + len(blob_files)
 
-                # 知识检索
-                print("   -> 正在检索知识库...")
-                context = rag_engine.search(user_query, top_k=3)
+        if use_file and total_files_count > 0:
+            
+            # --- 分支 A: 知识图谱模式 (GraphRAG) ---
+            if use_graph:
+                print("   -> 🔵 Mode: GraphRAG (Full Context Integration)")
                 
+                # 1. 准备图谱构建的完整语料 (文本文件 + 非文本文件的AI描述)
+                full_corpus_content = ""
+                
+                # A. 读取现有的合并文本 (来自 text_files)
+                if merged_md and os.path.exists(merged_md):
+                    with open(merged_md, "r", encoding="utf-8") as f:
+                        full_corpus_content += f.read() + "\n\n"
+                
+                # B. 处理非文本文件 (Blob) -> 转为文本描述
+                # 逻辑要求：每个非文本文件生成 1200 token 的详细说明
+                if blob_files:
+                    print(f"   -> [GraphPrep] 正在将 {len(blob_files)} 个非文本文件转化为图谱语料...")
+                    for bf in blob_files:
+                        try:
+                            # 视作文本文件处理：生成长描述
+                            blob_desc = doc_analyzer.analyze(
+                                bf, 
+                                prompt="请详细描述该文件的内容，以便构建准确的知识图谱。", 
+                                max_token_limit=1200
+                            )
+                            full_corpus_content += f"### File: {os.path.basename(bf)}\nContent Description:\n{blob_desc}\n\n"
+                        except Exception as e:
+                            print(f"   ❌ Error processing blob {bf} for graph: {e}")
+                
+                # C. 保存为临时构建文件并构建图谱
+                # 将所有内容整合后，再次直接调用 Build_graph
+                graph_input_path = os.path.join(upload_dir, "graph_full_context.md")
+                with open(graph_input_path, "w", encoding="utf-8") as f:
+                    f.write(full_corpus_content)
+                
+                try:
+                    print(f"   -> Building Graph from integrated corpus: {os.path.basename(graph_input_path)}")
+                    rag_engine.build_graph(graph_input_path)
+                    print("   ✅ Graph Build/Update Complete")
+                except Exception as build_e:
+                    print(f"   ❌ Graph Build Failed: {build_e}")
+                
+                # D. 搜索图谱获取上下文 (Router 使用的内容)
+                print("   -> Searching Knowledge Graph...")
+                context = rag_engine.search(user_query, top_k=3)
+
+            # --- 分支 B: 直接多文件模式 (No Graph) ---
             else:
-                print("   -> 模式: 直接文档分析 (Document Reader)")
-                records = project_manager.get_file_records()
-                if not records:
-                    print("   -> 没有找到文件，上下文中仅包含用户输入")
-                    context = ""
-                else:
-                    target_file = records[0]
-                    file_path = target_file.get("location")
-                    if not file_path:
-                         file_path = os.path.join(project_manager.get_project_dir(), "uploads", target_file['filename'])
-                    
-                    if os.path.exists(file_path):
-                        print(f"   -> 正在读取文档: {target_file['filename']}")
-                        analysis_result = doc_analyzer.analyze(file_path, prompt=None) 
-                        context = f"User Uploaded Document Content Analysis:\n{analysis_result}"
-                    else:
-                        print("   ⚠️ 文件路径无效")
-                        context = ""
+                print("   -> 🟠 Mode: Direct Analysis (All Files)")
+                
+                # 逻辑要求：调用 document-reader 处理所有文件 (含文本文件)
+                # 约束：总字数 (Total Token Budget) 1200
+                
+                all_targets = text_files + blob_files
+                count = len(all_targets)
+                token_budget = 1200
+                # 动态分配每个文件的配额，最少给100，防止文件过多时分配为0
+                limit_per_file = max(100, token_budget // count) if count > 0 else 1200
+                
+                file_contexts = []
+                print(f"   -> Processing {count} files (Limit: ~{limit_per_file} tokens/file)...")
+                
+                for fpath in all_targets:
+                    try:
+                        # 统一使用 analyzer 生成摘要，文本文件也能处理
+                        analysis = doc_analyzer.analyze(
+                            fpath, 
+                            prompt=f"Briefly explain this file's relevance to: {user_query}", 
+                            max_token_limit=limit_per_file
+                        )
+                        file_contexts.append(f"### File: {os.path.basename(fpath)}\nSummary:\n{analysis}\n")
+                    except Exception as e:
+                        print(f"Error analyzing {fpath}: {e}")
+                
+                context = "\n".join(file_contexts)
+        
         else:
-            print("   -> 模式: 纯文本生成 (不依赖文件)")
-            context = "" # 或者可以将 user_query 重复作为 context，但这里留空让 Prompt 更纯粹
+            print("   -> ⚪ Mode: Pure Text (No File Context)")
+            context = "" # 仅使用用户 Query
 
         # 2. Router 调度中心
         print("   -> Router 正在制定策略...")

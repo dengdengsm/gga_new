@@ -207,7 +207,7 @@ class LightGraphRAG:
             backbone_subgraph = self.graph.subgraph(backbone_nodes)
             backbone_edges = []
             # 简单采样策略：取前 500 条边
-            for u, v, d in list(backbone_subgraph.edges(data=True))[:500]:
+            for u, v, d in list(backbone_subgraph.edges(data=True))[:300]:
                 backbone_edges.append(f"{u} --[{d.get('relation','related')}]--> {v}")
             backbone_str = "\n".join(backbone_edges)
 
@@ -215,7 +215,7 @@ class LightGraphRAG:
             fragment_subgraph = self.graph.subgraph(fragment_nodes)
             fragment_edges = []
             # 碎片通常较小，尽可能全部提供
-            for u, v, d in list(fragment_subgraph.edges(data=True))[:300]:
+            for u, v, d in list(fragment_subgraph.edges(data=True))[:100]:
                 fragment_edges.append(f"{u} --[{d.get('relation','related')}]--> {v}")
             
             # 如果碎片没有内部边（全是孤立点），则列出节点
@@ -438,10 +438,10 @@ class LightGraphRAG:
             print(f"✨ 逻辑缝合完成，新增 {count_new} 条跨块逻辑。")
 
         # Phase 3: Global Inference (Backbone)
-        print(f"Phase 3: 宏观逻辑推导...")
-        valid_contents = [c for c in file_contents if c]
-        self._infer_global_relationships(valid_contents, p_infer)
-        self.graph_version += 1
+        #print(f"Phase 3: 宏观逻辑推导...")
+        #valid_contents = [c for c in file_contents if c]
+        #self._infer_global_relationships(valid_contents, p_infer)
+        #self.graph_version += 1
 
         # Phase 4: Backbone-Fragment Optimization
         print(f"Phase 4: 主干-碎片实体对齐优化...")
