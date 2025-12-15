@@ -59,12 +59,12 @@ class CodeGenAgent:
             **You MUST adapt your code generation strategy based on this value:**
 
             * **Low Richness (0.0 - 0.3) -> "High-Level Summary"**
-                - **Focus**: Only show the main business flow (Happy Path).
+                - **Focus**: Only show the main business.
                 - **Contains NO More Than Ten Nodes**
 
             * **Medium Richness (0.4 - 0.7) -> "Standard Logic"**
-                - **Focus**: Clear structural representation of the algorithm.
-                - **Contains No More Than Twenty Nodes**
+                - **Focus**: Clear structural.
+                - **Contains Strictly No More Than Twenty Nodes**
 
             * **High Richness (0.8 - 1.0) -> "Source Code Fidelity"**
                 - **Focus**: A debugger-level view of the execution flow.

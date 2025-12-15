@@ -15,7 +15,7 @@ import { MermaidEditor } from "@/components/mermaid-editor";
 import { MermaidRenderer } from "@/components/mermaid-renderer";
 import { GenerationControls } from "@/components/generation-controls"; // 引入新组件
 import { generateMermaidFromText } from "@/lib/ai-service";
-import { isWithinCharLimit } from "@/lib/utils";
+import { isWithinCharLimit, cn } from "@/lib/utils";
 import { isPasswordVerified, hasCustomAIConfig } from "@/lib/config-service";
 import { HistoryList } from "@/components/history-list";
 import { getHistory, addHistoryEntry } from "@/lib/history-service";
@@ -43,6 +43,9 @@ export default function Home() {
   
   const [leftTab, setLeftTab] = useState("manual");
   const [historyEntries, setHistoryEntries] = useState([]);
+
+  // --- 布局状态 ---
+  const [isEditorCollapsed, setIsEditorCollapsed] = useState(false);
 
   // 知识图谱相关状态
   const [graphData, setGraphData] = useState({ nodes: [], links: [] });
@@ -250,7 +253,14 @@ export default function Home() {
 
                 {/* --- 下方内容区域 --- */}
                 <div className="flex-1 flex flex-col overflow-hidden mt-0">
-                  <div className="h-40 md:h-52 flex-shrink-0">
+                  {/* 【布局优化】
+                     如果编辑器被折叠 (isEditorCollapsed 为 true)，上方的输入区域 (h-...) 自动扩展 (flex-1)。
+                     如果编辑器展开，保持固定高度。
+                  */}
+                  <div className={cn(
+                      "flex-shrink-0 transition-all duration-300",
+                      isEditorCollapsed ? "flex-1 min-h-0" : "h-40 md:h-52"
+                    )}>
                     <TabsContent value="manual" className="h-full mt-0">
                       <TextInput
                         value={inputText}
@@ -293,13 +303,22 @@ export default function Home() {
                     </Button>
                   </div>
 
-                  <div className="flex-1 min-h-0 pt-2">
+                  {/* 【布局优化】
+                      如果编辑器被折叠，它仅占用内容高度 (h-auto)，不占用剩余空间。
+                  */}
+                  <div className={cn(
+                      "pt-2 transition-all duration-300",
+                      isEditorCollapsed ? "h-auto flex-shrink-0" : "flex-1 min-h-0"
+                    )}>
                     <MermaidEditor
                       code={mermaidCode}
                       onChange={handleMermaidCodeChange}
                       errorMessage={errorMessage}
                       hasError={hasError}
                       onHistoryChange={refreshHistory}
+                      // 传递状态
+                      isCollapsed={isEditorCollapsed}
+                      onToggleCollapse={() => setIsEditorCollapsed(!isEditorCollapsed)}
                     />
                   </div>
                 </div>

@@ -47,7 +47,7 @@ default_graph_db = os.path.join(project_manager.get_project_dir(DEFAULT_PROJECT)
 
 try:
     rag_engine = LightGraphRAG(persist_dir=default_graph_db)
-    router_agent = RouterAgent(model_name="deepseek-chat", learn_mode=True)
+    router_agent = RouterAgent(model_name="deepseek-chat", learn_mode=False)
     code_gen_agent = CodeGenAgent(model_name="deepseek-chat")
     code_revise_agent = CodeReviseAgent(
         mistake_file_path="./knowledge/experience/mistakes.json", 

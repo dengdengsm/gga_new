@@ -86,5 +86,13 @@
   {
     "q": "Parse error expecting specific tokens, got 'PS'",
     "a": "Ensure all syntax elements in diagrams are valid and match expected token types, avoiding unsupported or malformed constructs."
+  },
+  {
+    "q": "Cannot set properties of undefined (setting 'style')",
+    "a": "Avoid using inline HTML or CSS styles directly in node labels; use class definitions for styling instead."
+  },
+  {
+    "q": "style named fill is not supported",
+    "a": "Enclose text values in quotes to avoid syntax errors in chart definitions."
   }
 ]

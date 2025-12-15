@@ -6,14 +6,15 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { 
   Copy, Check, Wand2, ArrowLeftRight, 
-  History, Star, X, Trash2 
+  History, Star, X, Trash2,
+  ChevronDown, ChevronUp // 新增图标
 } from "lucide-react";
 import { copyToClipboard } from "@/lib/utils";
 import { autoFixMermaidCode, toggleMermaidDirection } from "@/lib/mermaid-fixer";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { optimizeMermaidCode } from "@/lib/ai-service";
-import { addHistoryEntry } from "@/lib/history-service"; // 【新增】引入历史记录服务
+import { addHistoryEntry } from "@/lib/history-service"; 
 import { 
   getSuggestionHistory, 
   addSuggestionToHistory, 
@@ -30,7 +31,9 @@ export function MermaidEditor({
   onChange, 
   errorMessage, 
   hasError,
-  onHistoryChange // 【新增】接收刷新回调
+  onHistoryChange,
+  isCollapsed,        // 新增 prop
+  onToggleCollapse    // 新增 prop
 }) {
   const [copied, setCopied] = useState(false);
   const [isFixing, setIsFixing] = useState(false);
@@ -192,14 +195,12 @@ export function MermaidEditor({
       onChange(optimizedCode);
       toast.success("优化完成");
 
-      // 【新增】保存优化结果到历史记录
       try {
         addHistoryEntry({
-          query: `[优化] ${trimmedInstruction}`, // 加个前缀区分
+          query: `[优化] ${trimmedInstruction}`, 
           code: optimizedCode,
-          diagramType: 'optimization' // 标记为优化类型
+          diagramType: 'optimization' 
         });
-        // 刷新列表
         if (onHistoryChange) {
             onHistoryChange();
         }
@@ -222,9 +223,22 @@ export function MermaidEditor({
   return (
     <div className="flex flex-col h-full">
       {/* 编辑器标题栏 */}
-      <div className="flex justify-between items-center h-8 mb-2">
+      <div className="flex justify-between items-center h-8 mb-2 flex-shrink-0">
         <h3 className="text-sm font-medium">Mermaid 代码</h3>
         <div className="flex items-center gap-2">
+           {/* 折叠/展开按钮 */}
+           {onToggleCollapse && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onToggleCollapse}
+              className="h-7 w-7 p-0"
+              title={isCollapsed ? "展开代码编辑器" : "折叠代码编辑器"}
+            >
+              {isCollapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+            </Button>
+          )}
+
           <Button
             variant="outline"
             size="sm"
@@ -278,24 +292,12 @@ export function MermaidEditor({
         </div>
       </div>
 
-      {/* 代码编辑器容器 */}
-      <div className="flex-1 min-h-0">
-        <Textarea
-          value={code}
-          onChange={handleChange}
-          placeholder="生成的 Mermaid 代码将显示在这里..."
-          className="w-full h-full font-mono text-sm mermaid-editor overflow-y-auto resize-none"
-          disabled={isFixing || isOptimizing}
-          spellCheck={false}
-          autoComplete="off"
-          autoCorrect="off"
-          autoCapitalize="off"
-        />
-      </div>
-
-      {/* 继续优化面板 */}
+      {/* 【布局调整】
+         将“继续优化面板”移动到代码编辑器上方。
+         这样点击展开时，它是向下推开代码框（或位于代码框之上）。
+      */}
       {showOptimize && (
-        <div className="mt-2 border rounded-md p-2 h-48 flex flex-col bg-muted/10">
+        <div className="mb-2 border rounded-md p-2 h-48 flex flex-col bg-muted/10 flex-shrink-0">
           <Tabs value={optTab} onValueChange={setOptTab} className="flex flex-col h-full">
             <div className="flex items-center justify-between mb-2">
               <TabsList className="h-7">
@@ -309,7 +311,6 @@ export function MermaidEditor({
                 <div className="text-xs text-muted-foreground">
                   {isOptimizing ? "正在优化…" : null}
                 </div>
-                {/* 清空按钮 (只在建议Tab显示) */}
                 {optTab === 'suggestions' && displaySuggestions.length > 0 && (
                   <Button 
                     variant="ghost" 
@@ -338,7 +339,6 @@ export function MermaidEditor({
                             ${isGlobal ? 'bg-amber-100 border-amber-300 dark:bg-amber-900/30 dark:border-amber-700' : 'bg-secondary border-transparent hover:border-input'}
                           `}
                         >
-                          {/* 左侧：应用建议按钮 */}
                           <Button 
                             variant="ghost" 
                             size="sm" 
@@ -353,7 +353,6 @@ export function MermaidEditor({
                             {s}
                           </Button>
                           
-                          {/* 右侧：删除按钮 */}
                           <div className={`border-l ${isGlobal ? 'border-amber-300 dark:border-amber-700' : 'border-white/10 dark:border-black/10'}`}></div>
                           <Button
                             variant="ghost"
@@ -413,6 +412,23 @@ export function MermaidEditor({
               </div>
             </TabsContent>
           </Tabs>
+        </div>
+      )}
+
+      {/* 代码编辑器容器 (可折叠) */}
+      {!isCollapsed && (
+        <div className="flex-1 min-h-0">
+          <Textarea
+            value={code}
+            onChange={handleChange}
+            placeholder="生成的 Mermaid 代码将显示在这里..."
+            className="w-full h-full font-mono text-sm mermaid-editor overflow-y-auto resize-none"
+            disabled={isFixing || isOptimizing}
+            spellCheck={false}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+          />
         </div>
       )}
     </div>
