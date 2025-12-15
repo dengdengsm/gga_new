@@ -80,6 +80,8 @@ class RouterAgent:
                 "You are a Visualization Architect. Analyze the input content.\n"
                 "Output JSON: {\"reason\": \"...\", \"target_prompt_file\": \"...\", \"analysis_content\": \"...\"}"
             )
+
+        base_prompt += "\n**You should analyze the content according to the user's requirement**"
         # --- 核心修改：在代码里动态注入“强制参考指令” ---
         if retrieved_experiences:
             # 如果有经验，就加一段“狠话”
@@ -88,7 +90,8 @@ class RouterAgent:
                 "### 🧠 CRITICAL REFERENCE (RAG MEMORY)\n"
                 "The following are **SUCCESSFUL PAST STRATEGIES** retrieved from your memory bank.\n"
                 "**INSTRUCTION**: You MUST prioritized these strategies. If a past case used a specific diagram type for a similar scenario, **COPY THAT CHOICE**.\n"
-                "**Attention**: Pay more attention to the most popular strategies, for that is the most accepted, too. But select the type by your wisdom. "
+                "**Attention**: Pay more attention to the most popular strategies, for that is the most accepted, too.  "
+                f"**The diagram type you choose should be suitable for the user's requirement: **"
                 "--------------------------------------------------\n"
             )
             # 拼装：指令 + 具体的经验列表
@@ -142,8 +145,7 @@ class RouterAgent:
                 "\n\n"
                 "### 🧠 CRITICAL REFERENCE (RAG MEMORY)\n"
                 "The following are **SUCCESSFUL PAST STRATEGIES** retrieved from your memory bank.\n"
-                "**INSTRUCTION**: You MUST prioritized these strategies. If a past case used a specific diagram type for a similar scenario, **COPY THAT CHOICE**.\n"
-                f"**Attention**: Pay more attenntion to the {specific_type}"
+                f"**INSTRUCTION**: You can learn only from the {specific_type} strategies, .\nOther type of diagram has little value to learn from.\n"
                 "--------------------------------------------------\n"
             )
             # 拼装：指令 + 具体的经验列表

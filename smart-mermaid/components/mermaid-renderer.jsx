@@ -2,10 +2,10 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
-import { 
-  Download, 
-  ZoomIn, 
-  ZoomOut, 
+import {
+  Download,
+  ZoomIn,
+  ZoomOut,
   Minimize,
   Maximize,
   Move
@@ -16,17 +16,17 @@ import { toast } from "sonner";
 export function MermaidRenderer({ mermaidCode, onChange, onErrorChange }) {
   const mermaidRef = useRef(null);
   const containerRef = useRef(null);
-  
+
   // 性能优化：使用 Ref 存储变换状态，避免高频 Re-render
   const transformRef = useRef({ x: 0, y: 0, k: 1 });
-  
+
   // 仅用于 UI 显示的 Zoom 数值，不需要高频更新
   const [displayZoom, setDisplayZoom] = useState(100);
-  
+
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  
+
   // 拖拽状态
   const isDraggingRef = useRef(false);
   const startPosRef = useRef({ x: 0, y: 0 });
@@ -58,7 +58,7 @@ export function MermaidRenderer({ mermaidCode, onChange, onErrorChange }) {
         existingElement.parentNode.removeChild(existingElement);
       }
     }
-    
+
     const strayElements = document.querySelectorAll('[id^="dmermaid-"]');
     strayElements.forEach(element => {
       if (element.parentNode && !mermaidRef.current?.contains(element)) {
@@ -82,18 +82,28 @@ export function MermaidRenderer({ mermaidCode, onChange, onErrorChange }) {
         setError(null);
 
         const mermaid = (await import("mermaid")).default;
-        
+
         mermaid.initialize({
           startOnLoad: false,
-          theme: 'default',
+          theme: 'neutral',
           securityLevel: 'loose',
-          flowchart: { useMaxWidth: true, htmlLabels: true },
+          // 1. 全局配置：尝试启用 elk (部分图表类型支持)
+          flowchart: {
+            useMaxWidth: true,
+            htmlLabels: true,
+            // 添加这就行，让流程图默认使用 elk 引擎
+            defaultRenderer: 'elk'
+          },
+          // 2. ELK 的具体配置（可选）
+          elk: {
+            mergeEdges: true,
+            nodePlacementStrategy: 'NETWORK_SIMPLEX', // 或 'LINEAR_SEGMENTS'
+          },
           sequence: { useMaxWidth: true, wrap: true },
           gantt: { useMaxWidth: true },
           journey: { useMaxWidth: true },
           pie: { useMaxWidth: true }
         });
-
         try {
           await mermaid.parse(mermaidCode);
         } catch (parseError) {
@@ -111,9 +121,9 @@ export function MermaidRenderer({ mermaidCode, onChange, onErrorChange }) {
 
         const id = `mermaid-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
         mermaidRef.current.setAttribute('data-mermaid-id', id);
-        
+
         const { svg } = await mermaid.render(id, mermaidCode);
-        
+
         if (mounted) {
           mermaidRef.current.innerHTML = svg;
           setIsLoading(false);
@@ -121,7 +131,7 @@ export function MermaidRenderer({ mermaidCode, onChange, onErrorChange }) {
           transformRef.current = { x: 0, y: 0, k: 1 };
           updateTransform();
           setDisplayZoom(100);
-          
+
           if (onErrorChange) onErrorChange(null, false);
         }
       } catch (err) {
@@ -157,17 +167,17 @@ export function MermaidRenderer({ mermaidCode, onChange, onErrorChange }) {
     if (e.shiftKey && mermaidRef.current?.contains(e.target)) {
       e.preventDefault();
       e.stopPropagation();
-      
+
       const rect = containerRef.current?.getBoundingClientRect();
       if (!rect) return;
 
       const mouseX = e.clientX - rect.left;
       const mouseY = e.clientY - rect.top;
-      
+
       const currentK = transformRef.current.k;
       const delta = e.deltaY > 0 ? 0.9 : 1.1;
       const newK = Math.max(0.1, Math.min(5, currentK * delta));
-      
+
       // 以鼠标为中心缩放的位移计算
       // 公式：newX = mouseX - (mouseX - oldX) * (newK / oldK)
       const zoomRatio = newK / currentK;
@@ -190,30 +200,30 @@ export function MermaidRenderer({ mermaidCode, onChange, onErrorChange }) {
   const handleMouseDown = (e) => {
     // 允许在容器或内容上点击，忽略按钮等
     if (e.target.closest('button')) return;
-    
+
     isDraggingRef.current = true;
     startPosRef.current = {
       x: e.clientX - transformRef.current.x,
       y: e.clientY - transformRef.current.y
     };
-    if(containerRef.current) containerRef.current.style.cursor = 'grabbing';
+    if (containerRef.current) containerRef.current.style.cursor = 'grabbing';
   };
 
   const handleMouseMove = useCallback((e) => {
     if (!isDraggingRef.current) return;
     e.preventDefault();
-    
+
     // 直接计算新坐标
     transformRef.current.x = e.clientX - startPosRef.current.x;
     transformRef.current.y = e.clientY - startPosRef.current.y;
-    
+
     // 直接操作 DOM，不触发 Re-render
     updateTransform();
   }, []);
 
   const handleMouseUp = useCallback(() => {
     isDraggingRef.current = false;
-    if(containerRef.current) containerRef.current.style.cursor = 'grab';
+    if (containerRef.current) containerRef.current.style.cursor = 'grab';
   }, []);
 
   // 全局事件监听
@@ -230,20 +240,20 @@ export function MermaidRenderer({ mermaidCode, onChange, onErrorChange }) {
   const handleFitToScreen = () => {
     const container = containerRef.current;
     const svgElement = mermaidRef.current?.querySelector('svg');
-    
+
     if (container && svgElement) {
       const containerRect = container.getBoundingClientRect();
       const svgRect = svgElement.getBoundingClientRect();
       // 重置 transform 以获取原始 SVG 尺寸进行计算
       // 这里的计算略复杂因为 SVG 已经被 transform 了。
       // 简单策略：先重置，计算比例，再应用。
-      
+
       const widthRatio = containerRect.width / (svgElement.viewBox.baseVal?.width || svgRect.width);
       const heightRatio = containerRect.height / (svgElement.viewBox.baseVal?.height || svgRect.height);
-      
+
       // 如果 viewBox 获取不到，可能需要更复杂的逻辑，这里简化处理
       const newZoom = Math.min(widthRatio, heightRatio, 1) * 0.9;
-      
+
       transformRef.current = { x: 0, y: 0, k: newZoom || 1 }; // 居中逻辑可后续优化
       updateTransform();
       setDisplayZoom(Math.round((newZoom || 1) * 100));
@@ -327,7 +337,7 @@ export function MermaidRenderer({ mermaidCode, onChange, onErrorChange }) {
             </div>
           </div>
         )}
-        
+
         {error && (
           <div className="absolute inset-0 flex items-center justify-center bg-background/80 z-10">
             <div className="text-center p-4">
@@ -336,29 +346,29 @@ export function MermaidRenderer({ mermaidCode, onChange, onErrorChange }) {
             </div>
           </div>
         )}
-        
+
         {!isLoading && !error && !mermaidCode && (
           <div className="absolute inset-0 flex items-center justify-center">
             <p className="text-muted-foreground">请生成Mermaid代码以查看图表</p>
           </div>
         )}
-        
+
         {/* Container for Pan/Zoom */}
-        <div 
+        <div
           ref={containerRef}
           className="w-full h-full overflow-hidden cursor-grab active:cursor-grabbing relative"
           onWheel={handleWheel}
           onMouseDown={handleMouseDown}
-          // Touch events omitted for brevity but logic is similar (update Refs not State)
+        // Touch events omitted for brevity but logic is similar (update Refs not State)
         >
           {/* Content Wrapper - Applied Transforms */}
-          <div 
-            ref={mermaidRef} 
+          <div
+            ref={mermaidRef}
             className="w-full h-full flex items-center justify-center p-4 origin-top-left absolute top-0 left-0 will-change-transform"
-            style={{ 
+            style={{
               // Initial transform
               transform: `scale(${transformRef.current?.k || 1}) translate(${transformRef.current?.x || 0}px, ${transformRef.current?.y || 0}px)`
-             }}
+            }}
           />
         </div>
 

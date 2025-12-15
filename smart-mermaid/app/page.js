@@ -31,8 +31,6 @@ export default function Home() {
   const [mermaidCode, setMermaidCode] = useState("");
   const [diagramType, setDiagramType] = useState("auto");
   const [isGenerating, setIsGenerating] = useState(false);
-  const [streamingContent, setStreamingContent] = useState("");
-  const [isStreaming, setIsStreaming] = useState(false);
   const [showSettingsDialog, setShowSettingsDialog] = useState(false);
   const [passwordVerified, setPasswordVerified] = useState(false);
   const [hasCustomConfig, setHasCustomConfig] = useState(false);
@@ -43,7 +41,6 @@ export default function Home() {
 
   const [renderMode, setRenderMode] = useState("mermaid");
   
-  const [showRealtime, setShowRealtime] = useState(false);
   const [leftTab, setLeftTab] = useState("manual");
   const [historyEntries, setHistoryEntries] = useState([]);
 
@@ -63,6 +60,12 @@ export default function Home() {
     setHistoryEntries(getHistory());
   }, []);
 
+  // 【新增】刷新历史记录的函数，传递给子组件使用
+  const refreshHistory = async () => {
+    const history = await getHistory();
+    setHistoryEntries(history);
+  };
+
   const handleTextChange = (text) => {
     setInputText(text);
   };
@@ -73,10 +76,6 @@ export default function Home() {
 
   const handleMermaidCodeChange = (code) => {
     setMermaidCode(code);
-  };
-
-  const handleStreamChunk = (chunk) => {
-    setStreamingContent(prev => prev + chunk);
   };
 
   const handleSettingsClick = () => {
@@ -162,17 +161,16 @@ export default function Home() {
     }
 
     setIsGenerating(true);
-    setIsStreaming(showRealtime);
-    setStreamingContent("");
 
     try {
-      // 【修改】传入 useGraph 和 useFileContext
+      // 传入 useGraph 和 useFileContext
+      // onChunk 设为 null，因为已移除流式功能
       const { mermaidCode: generatedCode, error } = await generateMermaidFromText(
         inputText,
         diagramType,
-        showRealtime ? handleStreamChunk : null,
+        null, 
         useGraph,
-        useFileContext // 【新增】
+        useFileContext
       );
 
       if (error) {
@@ -192,9 +190,8 @@ export default function Home() {
           code: generatedCode,
           diagramType
         });
-        setTimeout(async () => {
-          setHistoryEntries(await getHistory());
-        }, 100);
+        // 使用封装好的刷新函数
+        setTimeout(refreshHistory, 100);
       } catch (e) {
         console.error("Failed to save history:", e);
       }
@@ -204,7 +201,6 @@ export default function Home() {
       toast.error("生成图表时发生错误");
     } finally {
       setIsGenerating(false);
-      setIsStreaming(false);
     }
   };
 
@@ -315,26 +311,15 @@ export default function Home() {
                         </>
                       )}
                     </Button>
-                    <div className="flex items-center gap-2 px-2 bg-muted/30 rounded border h-10">
-                       <span className="text-xs text-muted-foreground whitespace-nowrap">流式</span>
-                       <Switch
-                        checked={showRealtime}
-                        onCheckedChange={setShowRealtime}
-                        className="scale-75"
-                       />
-                    </div>
                   </div>
 
                   <div className="flex-1 min-h-0">
                     <MermaidEditor
                       code={mermaidCode}
                       onChange={handleMermaidCodeChange}
-                      streamingContent={streamingContent}
-                      isStreaming={isStreaming}
                       errorMessage={errorMessage}
                       hasError={hasError}
-                      onStreamChunk={handleStreamChunk}
-                      showRealtime={showRealtime}
+                      onHistoryChange={refreshHistory} // 【新增】传递刷新回调
                     />
                   </div>
                 </div>

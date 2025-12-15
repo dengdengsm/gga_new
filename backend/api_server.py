@@ -20,89 +20,15 @@ from codez_gen import CodeGenAgent
 from code_revise import CodeReviseAgent
 from utils import quick_validate_mermaid, preprocess_multi_files
 from document_reader import DocumentAnalyzer
+from project_manager import ProjectManager
 
 # --- 配置 ---
 PROJECTS_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.projects"))
 DEFAULT_PROJECT = "default"
 
 # --- 全局项目管理器 ---
-class ProjectManager:
-    def __init__(self):
-        self.current_project = DEFAULT_PROJECT
-        self.ensure_project_exists(DEFAULT_PROJECT)
-    
-    def get_project_dir(self, project_name: str = None):
-        if project_name is None:
-            project_name = self.current_project
-        return os.path.join(PROJECTS_ROOT, project_name)
 
-    def ensure_project_exists(self, project_name: str):
-        p_dir = os.path.join(PROJECTS_ROOT, project_name)
-        os.makedirs(os.path.join(p_dir, "uploads"), exist_ok=True)
-        os.makedirs(os.path.join(p_dir, "graph_db"), exist_ok=True)
-        
-        hist_file = os.path.join(p_dir, "history.json")
-        if not os.path.exists(hist_file):
-            with open(hist_file, "w", encoding="utf-8") as f:
-                json.dump([], f)
-                
-        files_record = os.path.join(p_dir, "files.json")
-        if not os.path.exists(files_record):
-            with open(files_record, "w", encoding="utf-8") as f:
-                json.dump([], f)
-                
-        return p_dir
-
-    def list_projects(self):
-        if not os.path.exists(PROJECTS_ROOT):
-            return []
-        return [d for d in os.listdir(PROJECTS_ROOT) if os.path.isdir(os.path.join(PROJECTS_ROOT, d))]
-
-    def switch_project(self, project_name: str):
-        if project_name not in self.list_projects():
-            raise ValueError(f"Project {project_name} does not exist")
-        self.current_project = project_name
-        return self.get_project_dir(project_name)
-
-    def get_file_records(self):
-        record_path = os.path.join(self.get_project_dir(), "files.json")
-        try:
-            if os.path.exists(record_path):
-                with open(record_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            return []
-        except:
-            return []
-
-    def add_file_record(self, record: dict):
-        record_path = os.path.join(self.get_project_dir(), "files.json")
-        records = self.get_file_records()
-        records.insert(0, record) 
-        with open(record_path, "w", encoding="utf-8") as f:
-            json.dump(records, f, ensure_ascii=False, indent=2)
-
-    def update_file_status(self, file_id: str, status: str, message: str):
-        record_path = os.path.join(self.get_project_dir(), "files.json")
-        records = self.get_file_records()
-        updated = False
-        for rec in records:
-            if rec.get("id") == file_id:
-                rec["status"] = status
-                rec["message"] = message
-                updated = True
-                break
-        if updated:
-            with open(record_path, "w", encoding="utf-8") as f:
-                json.dump(records, f, ensure_ascii=False, indent=2)
-
-    def remove_file_record(self, file_id: str):
-        record_path = os.path.join(self.get_project_dir(), "files.json")
-        records = self.get_file_records()
-        records = [r for r in records if r.get("id") != file_id]
-        with open(record_path, "w", encoding="utf-8") as f:
-            json.dump(records, f, ensure_ascii=False, indent=2)
-
-project_manager = ProjectManager()
+project_manager = ProjectManager(DEFAULT_PROJECT,PROJECTS_ROOT)
 
 # --- 初始化 FastAPI ---
 app = FastAPI(title="Smart Mermaid Backend (Project Managed)")
@@ -191,6 +117,12 @@ class HistoryEntry(BaseModel):
     diagramType: str = "auto"
     timestamp: Optional[str] = None
 
+class OptimizeRequest(BaseModel):
+    code: str
+    instruction: str
+    aiConfig: Optional[Dict[str, Any]] = None
+    accessPassword: Optional[str] = None
+    selectedModel: Optional[str] = None
 # --- 3. Routes ---
 
 # === 项目管理接口 ===
@@ -488,6 +420,7 @@ async def generate_mermaid(request: GenerateRequest):
                             prompt=f"Briefly explain this file's relevance to: {user_query}", 
                             max_token_limit=limit_per_file
                         )
+                        print("文档提取成功......")
                         file_contexts.append(f"### File: {os.path.basename(fpath)}\nSummary:\n{analysis}\n")
                     except Exception as e:
                         print(f"Error analyzing {fpath}: {e}")
@@ -581,6 +514,64 @@ async def generate_mermaid(request: GenerateRequest):
         import traceback
         traceback.print_exc()
         return {"mermaidCode": "", "error": str(e)}
+
+@app.post("/api/optimize-mermaid")
+async def optimize_mermaid(request: OptimizeRequest):
+    print(f"\n⚡ [Optimize] 收到优化请求: {request.instruction[:50]}...")
+    
+    try:
+        # 2. 第一步：执行优化 (不查 RAG，纯 LLM 修改)
+        # 这对应你要求的“调用llm进行优化，这个过程不检索任何rag”
+        current_code = code_revise_agent.optimize_code(request.code, request.instruction)
+        
+        # 3. 第二步：进入标准的“校验+自动修复”循环 (复用 generate_mermaid 的逻辑)
+        # 这对应你要求的“再用和generate_mermaid同一套的revise逻辑”
+        
+        max_retries = 3
+        attempt_history = []
+        validation = {'valid': False, 'error': 'Not started'}
+        
+        print(f"   -> 正在校验优化后的代码 (最大重试 {max_retries} 次)...")
+
+        for i in range(max_retries + 1):
+            validation = quick_validate_mermaid(current_code)
+            
+            if validation['valid']:
+                print(f"   ✅ [第 {i+1} 次] 校验通过")
+                # 如果是在修复过程中成功的，记录经验
+                if i > 0 and len(attempt_history) > 0:
+                    try:
+                        last_fail = attempt_history[-1]
+                        code_revise_agent.record_mistake(last_fail["code"], last_fail["error"], current_code)
+                    except: pass
+                break
+            else:
+                error_msg = validation['error']
+                print(f"   ❌ [第 {i+1} 次] 校验失败: {error_msg[:50]}...")
+                
+                if i == max_retries:
+                    break
+                
+                attempt_history.append({"code": current_code, "error": error_msg})
+                
+                # 调用带 RAG 的修复功能
+                print(f"   🔧 启动自动修复...")
+                current_code = code_revise_agent.revise_code(
+                    current_code, 
+                    error_message=error_msg, 
+                    previous_attempts=attempt_history
+                )
+
+        final_error = validation['error'] if not validation['valid'] else None
+        
+        return {
+            "optimizedCode": current_code, 
+            "error": final_error
+        }
+
+    except Exception as e:
+        print(f"🔥 [Optimize] 处理异常: {e}")
+        return {"optimizedCode": request.code, "error": str(e)}
 
 @app.post("/api/fix-mermaid")
 async def fix_mermaid(request: FixRequest):

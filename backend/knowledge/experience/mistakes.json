@@ -78,5 +78,9 @@
   {
     "q": "No such shape",
     "a": "Ensure all referenced shapes are defined in the diagram before use."
+  },
+  {
+    "q": "Parse error: Expecting 'SPACELINE', 'NL', 'EOF', got 'NODE_ID'",
+    "a": "Do not use HTML tags or special formatting within node labels; structure content as nested nodes instead."
   }
 ]

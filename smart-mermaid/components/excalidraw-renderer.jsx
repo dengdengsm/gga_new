@@ -109,7 +109,25 @@ function ExcalidrawRenderer({ mermaidCode, onErrorChange }) {
       const { elements, files } = await parseMermaidToExcalidraw(preprocessedCode);
       const convertedElements = convertToExcalidrawElements(elements);
       
-      setExcalidrawElements(convertedElements);
+      // ========================================================
+      // 【新增逻辑】过滤掉隐形的连线
+      // 很多时候 Mermaid 会用 stroke-width:0px 来做布局占位，
+      // 这些线在 Excalidraw 中应该被彻底移除，以免干扰选中或显示极细的线条。
+      // ========================================================
+      const visibleElements = convertedElements.filter(element => {
+        // 1. 过滤掉线宽为 0 的元素
+        if (element.strokeWidth === 0) return false;
+        
+        // 2. 过滤掉描边颜色完全透明的元素
+        if (element.strokeColor === "transparent" || element.strokeColor === "#00000000") return false;
+        
+        // 3. 过滤掉透明度为 0 的元素
+        if (element.opacity === 0) return false;
+
+        return true;
+      });
+
+      setExcalidrawElements(visibleElements);
       setExcalidrawFiles(files);
       setExcalidrawAPI(null);
       
@@ -320,10 +338,7 @@ function ExcalidrawRenderer({ mermaidCode, onErrorChange }) {
           </div>
         )}
         
-        {/* 核心修复：预览模式遮罩层
-            1. z-index 高于 Excalidraw，拦截所有鼠标事件，防止双击穿透导致组件上浮。
-            2. 提供点击入口，用户体验更直观。
-        */}
+        {/* 核心修复：预览模式遮罩层 */}
         {!isFullscreen && !isRendering && !renderError && mermaidCode && (
           <div 
             className="absolute inset-0 z-10 cursor-pointer flex items-center justify-center bg-transparent transition-colors hover:bg-black/5"
@@ -340,7 +355,6 @@ function ExcalidrawRenderer({ mermaidCode, onErrorChange }) {
         {/* 画布区域 */}
         <div className="w-full h-full relative">
           <Excalidraw
-            // 组合 Key：确保场景变了或者模式变了都会重载
             key={`${sceneKey}-${remountKey}`}
             viewModeEnabled={!isFullscreen} 
             zenModeEnabled={!isFullscreen}
@@ -352,14 +366,12 @@ function ExcalidrawRenderer({ mermaidCode, onErrorChange }) {
                 viewBackgroundColor: "#fafafa",
                 currentItemFontFamily: 1,
                 viewModeEnabled: !isFullscreen,
-                // 如果有保存的状态（比如滚动位置），也可以在这里恢复
                 ...(latestAppStateRef.current || {})
               },
               files: latestFilesRef.current || excalidrawFiles,
               scrollToContent: true,
             }}
             excalidrawAPI={(api) => setExcalidrawAPI(api)}
-            // 实时监听变更
             onChange={handleExcalidrawChange}
           />
         </div>

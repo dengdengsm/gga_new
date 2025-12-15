@@ -162,6 +162,36 @@ class CodeReviseAgent:
                 # 同样，这里不做 replace 清洗，保持流的原始性
                 yield chunk
 
+    def optimize_code(self, code: str, instruction: str) -> str:
+        """
+        【新增】根据用户指令优化 Mermaid 代码
+        特点：不使用 RAG，仅基于 LLM 理解执行指令（如：布局调整、样式修改、内容增删）
+        """
+        print(f"\n--- CodeRevise: 执行优化指令 ---")
+        print(f"   [Instruction]: {instruction[:100]}...")
+
+        system_prompt = (
+            "You are an expert Mermaid Diagram Specialist.\n"
+            "Your task is to MODIFY the provided Mermaid code based strictly on the User Instruction.\n"
+            "Rules:\n"
+            "1. Output ONLY the modified Mermaid code.\n"
+            "2. Do not add markdown code blocks (```mermaid ... ```). Just the code text.\n"
+            "3. Maintain the original diagram logic unless the instruction explicitly asks to change it.\n"
+            "4. If the instruction involves global preferences (e.g., 'Use specific colors'), apply them accurately."
+        )
+
+        user_content = f"【Current Code】:\n{code}\n\n【Optimization Instruction】:\n{instruction}"
+        
+        try:
+            # 直接调用 LLM，不查 RAG
+            optimized_code = self.llm.chat([{"role": "user", "content": user_content}], system_prompt=system_prompt)
+            # 基础清洗
+            optimized_code = optimized_code.replace("```mermaid", "").replace("```", "").strip()
+            return optimized_code
+        except Exception as e:
+            print(f"优化调用失败: {e}")
+            return code # 失败则返回原代码
+
     def record_mistake(self, bad_code: str, error_message: str, fixed_code: str):
         """
         核心功能 (错题本)：
