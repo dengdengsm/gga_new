@@ -98,5 +98,9 @@
   {
     "q": "Unrecognized text in subgraph ID",
     "a": "Do not use spaces or special characters in subgraph IDs; use quotes around IDs containing spaces."
+  },
+  {
+    "q": "Parse error on style attribute with quotes",
+    "a": "Do not use quotes around style values in class definitions; list them as comma-separated items without quotes."
   }
 ]

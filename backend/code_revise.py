@@ -70,12 +70,11 @@ class CodeReviseAgent:
         if use_mistake_book:
             search_query = error_message if error_message else raw_code[:200]
             retrieved_docs = self.rag.search(query=search_query, top_k=6)
-            
             reference_context = "\n- ".join(retrieved_docs)
             if not reference_context:
                 reference_context = "No specific past experience found. Follow standard syntax."
 
-        print(f"   [RAG 知识召回]: 检索到 {len(retrieved_docs)} 条相关建议")
+            print(f"   [RAG 知识召回]: 检索到 {len(retrieved_docs)} 条相关建议")
 
         # 2. 构建 Prompt
         # 构造失败历史的文本块

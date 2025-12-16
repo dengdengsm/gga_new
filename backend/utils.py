@@ -23,7 +23,39 @@ TEXT_EXTENSIONS = {
 }
 
 def quick_validate_mermaid(code: str) -> dict:
-    """验证 Mermaid 代码"""
+    """
+    验证图表代码 (支持 Mermaid 和 Graphviz)
+    自动识别代码类型并调用对应的 Kroki 接口进行验证
+    """
+    code = code.strip()
+    
+    # --- 1. Graphviz (DOT) 识别与验证 ---
+    # 特征：以 digraph 开头，或者以 graph 开头且包含 '{' (区分 Mermaid 的 graph TD)
+    # 这里的正则匹配：开头是 (strict )? digraph 或者是 graph ... {
+    is_graphviz = re.match(r'^\s*(strict\s+)?digraph', code, re.IGNORECASE) or \
+                  (re.match(r'^\s*(strict\s+)?graph', code, re.IGNORECASE) and '{' in code)
+
+    if is_graphviz:
+        try:
+            # 使用 Kroki 的 Graphviz 接口进行验证
+            response = requests.post(
+                "https://kroki.io/graphviz/svg",
+                json={"diagram_source": code},
+                timeout=10
+            )
+            if response.status_code == 200:
+                return {"valid": True, "error": ""}
+            else:
+                # Graphviz 的报错通常比较详细，直接返回
+                return {"valid": False, "error": f"Graphviz Syntax Error: {response.text}"}
+        except Exception as e:
+            # 网络或其他异常，暂时放行 (Fail Open) 以免阻碍生成
+            print(f"⚠️ Graphviz validation skipped due to network: {e}")
+            return {"valid": True, "error": ""}
+
+    # --- 2. Mermaid 识别与验证 (原有逻辑) ---
+    
+    # 硬规则检查：防止 classDef subgraph 关键字冲突
     if re.search(r'classDef\s+subgraph\b', code, re.IGNORECASE):
         error_msg = (
             "Syntax Error (Hard Check): "
@@ -32,6 +64,7 @@ def quick_validate_mermaid(code: str) -> dict:
             "✅ Fix: Rename it to something else (e.g., classDef subgraphStyle ...)"
         )
         return {"valid": False, "error": error_msg}
+    
     try:
         response = requests.post(
             "https://kroki.io/mermaid/svg",
@@ -43,7 +76,8 @@ def quick_validate_mermaid(code: str) -> dict:
         else:
             return {"valid": False, "error": response.text}
     except Exception as e:
-        return {"valid": False, "error": f"Request Exception: {str(e)}"}
+        # 网络异常时默认返回有效，防止因验证服务挂了导致整个功能不可用
+        return {"valid": True, "error": f"Validation Warning: {str(e)}"}
     
 def save_uploaded_files(uploaded_files):
     """保存上传文件"""

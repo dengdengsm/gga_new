@@ -27,6 +27,11 @@ const DIAGRAM_TYPES = [
     description: "最常用的图表，用于展示步骤、决策过程或工作流。" 
   },
   { 
+    value: "graphviz", 
+    label: "Graphviz (DOT)", 
+    description: "使用 DOT 语言绘制的通用图表，支持复杂的层级布局和精细的节点控制。" 
+  },
+  { 
     value: "sequenceDiagram", 
     label: "时序图 (Sequence)", 
     description: "展示对象之间交互的顺序，常用于系统设计和API调用分析。" 

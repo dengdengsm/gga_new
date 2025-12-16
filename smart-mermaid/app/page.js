@@ -4,16 +4,16 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { Wand2, Network } from "lucide-react";
+import { Wand2, Network, GitGraph } from "lucide-react"; // 引入 GitGraph 图标作为 Graphviz 的临时图标
 import { Header } from "@/components/header";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { TextInput } from "@/components/text-input";
 import { FileUpload } from "@/components/file-upload";
 import { DiagramTypeSelector } from "@/components/diagram-type-selector";
-// import { ModelSelector } from "@/components/model-selector"; // 已移除
 import { MermaidEditor } from "@/components/mermaid-editor";
 import { MermaidRenderer } from "@/components/mermaid-renderer";
-import { GenerationControls } from "@/components/generation-controls"; // 引入新组件
+import { GraphvizRenderer } from "@/components/graphviz-renderer"; // [新增] 引入 Graphviz 渲染器
+import { GenerationControls } from "@/components/generation-controls";
 import { generateMermaidFromText } from "@/lib/ai-service";
 import { isWithinCharLimit, cn } from "@/lib/utils";
 import { isPasswordVerified, hasCustomAIConfig } from "@/lib/config-service";
@@ -34,13 +34,14 @@ export default function Home() {
   const [passwordVerified, setPasswordVerified] = useState(false);
   const [hasCustomConfig, setHasCustomConfig] = useState(false);
 
-  // --- 生成策略状态 (由 GenerationControls 控制) ---
+  // --- 生成策略状态 ---
   const [useGraph, setUseGraph] = useState(false);
   const [useFileContext, setUseFileContext] = useState(true);
   const [useHistory, setUseHistory] = useState(false);
   const [useMistakes, setUseMistakes] = useState(false);
-  const [richness, setRichness] = useState(0.5); // 新增：丰富度参数
+  const [richness, setRichness] = useState(0.5);
 
+  // 渲染模式：mermaid | graphviz | excalidraw | graph
   const [renderMode, setRenderMode] = useState("mermaid");
 
   const [leftTab, setLeftTab] = useState("manual");
@@ -76,6 +77,13 @@ export default function Home() {
 
   const handleDiagramTypeChange = (type) => {
     setDiagramType(type);
+    // [新增] 如果用户手动选择了 Graphviz，自动切换视图
+    if (type === 'graphviz') {
+      setRenderMode('graphviz');
+    } else if (type !== 'auto' && renderMode === 'graphviz') {
+      // 如果用户从 Graphviz 切回其他类型（非自动），切回 Mermaid 视图
+      setRenderMode('mermaid');
+    }
   };
 
   const handleMermaidCodeChange = (code) => {
@@ -148,10 +156,7 @@ export default function Home() {
     setHasError(hasErr);
   };
 
-  // 修改：handleGenerateClick 接收可选参数 overrideText
-  // 这样可以在下钻分析等场景下，直接使用构建好的文本进行生成，而不必等待 state 更新
   const handleGenerateClick = async (overrideText = null) => {
-    // 如果 overrideText 是事件对象（点击事件），则忽略它，使用 inputText
     const textToUse = (typeof overrideText === 'string') ? overrideText : inputText;
 
     if (!textToUse.trim()) {
@@ -167,7 +172,6 @@ export default function Home() {
     setIsGenerating(true);
 
     try {
-      // 传递所有控制参数，包括 richness
       const { mermaidCode: generatedCode, error } = await generateMermaidFromText(
         textToUse,
         diagramType,
@@ -175,7 +179,7 @@ export default function Home() {
         useGraph,
         useFileContext,
         richness,
-        useHistory,  // 传入历史经验开关
+        useHistory,
         useMistakes
       );
 
@@ -190,6 +194,16 @@ export default function Home() {
       }
 
       setMermaidCode(generatedCode);
+      
+      // [新增] 智能视图切换
+      // 如果明确是 Graphviz 类型，切到 Graphviz 视图
+      // 如果当前在 Graphviz 视图但生成了 Mermaid (且不是 auto)，切回 Mermaid
+      if (diagramType === 'graphviz') {
+        setRenderMode('graphviz');
+      } else if (renderMode === 'graphviz' && diagramType !== 'auto') {
+        setRenderMode('mermaid');
+      }
+
       try {
         addHistoryEntry({
           query: textToUse,
@@ -209,34 +223,27 @@ export default function Home() {
     }
   };
 
-  // 新增：处理下钻分析
+  // 下钻分析 (支持 Mermaid 和 Graphviz)
   const handleDrillDown = (nodeLabel) => {
     if (!nodeLabel) return;
 
-    const promptText = `Please generate a detailed subgraph for the node [${nodeLabel}] showing its internal logic.`;
+    // 简单清洗 label
+    const cleanLabel = nodeLabel.replace(/['"]+/g, '');
+    const promptText = `Please generate a detailed subgraph/diagram for the node [${cleanLabel}] showing its internal logic or structure.`;
 
     let newText;
 
     if (useFileContext) {
-      // 依赖文件模式：直接替代输入框内容
-      // 因为在 RAG 模式下，上下文主要来自文件，Prompt 应保持清晰简洁
       newText = promptText;
     } else {
-      // 非依赖文件模式（纯文本模式）：合并输入框内容
-      // 需要保留之前的上下文，否则 AI 会丢失语境
       newText = inputText + "\n\n" + promptText;
     }
 
-    // 更新输入框内容
     setInputText(newText);
-
-    // 切换到手动输入 Tab，让用户看到变化
     setLeftTab("manual");
-
-    // 触发生成（传入最新的文本，避免等待 state 更新）
     handleGenerateClick(newText);
 
-    toast.info(`正在生成节点 "${nodeLabel}" 的子图...`);
+    toast.info(`正在生成节点 "${cleanLabel}" 的详情...`);
   };
 
   return (
@@ -257,16 +264,13 @@ export default function Home() {
 
               <Tabs value={leftTab} onValueChange={setLeftTab} className="flex flex-col h-full">
 
-                {/* --- 顶部工具栏 (整合了 Tabs 和 设置) --- */}
                 <div className="flex justify-between items-center pb-3 gap-2 flex-wrap">
-                  {/* 左侧：Tabs */}
                   <TabsList className="h-9">
                     <TabsTrigger value="manual">手动输入</TabsTrigger>
                     <TabsTrigger value="file">文件上传</TabsTrigger>
                     <TabsTrigger value="history">历史记录</TabsTrigger>
                   </TabsList>
 
-                  {/* 右侧：图表类型 + 生成策略设置 */}
                   <div className="flex items-center gap-2 flex-1 justify-end min-w-0">
                     <div className="w-[140px] flex-shrink-0">
                       <DiagramTypeSelector
@@ -288,12 +292,7 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* --- 下方内容区域 --- */}
                 <div className="flex-1 flex flex-col overflow-hidden mt-0">
-                  {/* 【布局优化】
-                     如果编辑器被折叠 (isEditorCollapsed 为 true)，上方的输入区域 (h-...) 自动扩展 (flex-1)。
-                     如果编辑器展开，保持固定高度。
-                  */}
                   <div className={cn(
                     "flex-shrink-0 transition-all duration-300",
                     isEditorCollapsed ? "flex-1 min-h-0" : "h-40 md:h-52"
@@ -315,6 +314,12 @@ export default function Home() {
                           setInputText(item.query || item.inputText || "");
                           setMermaidCode(item.code || item.mermaidCode || "");
                           setLeftTab("manual");
+                          // 如果历史记录中有图表类型，恢复它并切换视图
+                          if (item.diagramType) {
+                            setDiagramType(item.diagramType);
+                            if (item.diagramType === 'graphviz') setRenderMode('graphviz');
+                            else setRenderMode('mermaid');
+                          }
                         }}
                       />
                     </TabsContent>
@@ -322,7 +327,7 @@ export default function Home() {
 
                   <div className="h-16 flex items-center gap-2 flex-shrink-0 pt-2">
                     <Button
-                      onClick={() => handleGenerateClick()} // 显式调用，不传参
+                      onClick={() => handleGenerateClick()}
                       disabled={isGenerating || !inputText.trim() || !isWithinCharLimit(inputText, maxChars)}
                       className="h-10 flex-1 shadow-sm"
                     >
@@ -340,9 +345,6 @@ export default function Home() {
                     </Button>
                   </div>
 
-                  {/* 【布局优化】
-                      如果编辑器被折叠，它仅占用内容高度 (h-auto)，不占用剩余空间。
-                  */}
                   <div className={cn(
                     "pt-2 transition-all duration-300",
                     isEditorCollapsed ? "h-auto flex-shrink-0" : "flex-1 min-h-0"
@@ -353,10 +355,8 @@ export default function Home() {
                       errorMessage={errorMessage}
                       hasError={hasError}
                       onHistoryChange={refreshHistory}
-                      // 传递状态
                       isCollapsed={isEditorCollapsed}
                       onToggleCollapse={() => setIsEditorCollapsed(!isEditorCollapsed)}
-                      // 传递下钻回调
                       onDrillDown={handleDrillDown}
                     />
                   </div>
@@ -368,7 +368,7 @@ export default function Home() {
             <div className="col-span-1 md:col-span-2 flex flex-col h-full">
               {/* Header */}
               <div className="h-12 flex justify-between items-center flex-shrink-0">
-                <div className="flex items-center gap-2 bg-muted p-1 rounded-lg">
+                <div className="flex items-center gap-2 bg-muted p-1 rounded-lg overflow-x-auto no-scrollbar">
                   <Button
                     variant={renderMode === "mermaid" ? "secondary" : "ghost"}
                     size="sm"
@@ -377,6 +377,19 @@ export default function Home() {
                   >
                     Mermaid
                   </Button>
+                  
+                  {/* [新增] Graphviz 切换按钮 */}
+                  <Button
+                    variant={renderMode === "graphviz" ? "secondary" : "ghost"}
+                    size="sm"
+                    onClick={() => setRenderMode("graphviz")}
+                    className="h-8 text-xs px-3 gap-1"
+                    title="Graphviz DOT 渲染器"
+                  >
+                    <GitGraph className="h-3.5 w-3.5" />
+                    <span>Graphviz</span>
+                  </Button>
+
                   <Button
                     variant={renderMode === "excalidraw" ? "secondary" : "ghost"}
                     size="sm"
@@ -414,14 +427,27 @@ export default function Home() {
                     mermaidCode={mermaidCode}
                     onChange={handleMermaidCodeChange}
                     onErrorChange={handleErrorChange}
+                    onNodeDoubleClick={handleDrillDown}
                   />
                 )}
+                
+                {/* [新增] Graphviz 渲染器挂载 */}
+                {renderMode === "graphviz" && (
+                  <GraphvizRenderer
+                    code={mermaidCode} // 复用 mermaidCode 状态存储 DOT 代码
+                    onChange={handleMermaidCodeChange}
+                    onErrorChange={handleErrorChange}
+                    onNodeDoubleClick={handleDrillDown}
+                  />
+                )}
+
                 {renderMode === "excalidraw" && (
                   <ExcalidrawRenderer
                     mermaidCode={mermaidCode}
                     onErrorChange={handleErrorChange}
                   />
                 )}
+                
                 {renderMode === "graph" && useGraph && useFileContext && (
                   <KnowledgeGraphRenderer
                     graphData={graphData}
