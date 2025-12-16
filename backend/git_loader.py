@@ -141,25 +141,86 @@ class GitHubLoader:
                     f"文档({len(classified_files['documentation'])})")
         
         return classified_files
+    # 在 GitHubLoader 类中添加以下方法
+    def generate_tree_structure(self, repo_path: str) -> str:
+        """
+        生成紧凑的项目目录树，辅助 AI 理解整体架构
+        """
+        tree_lines = []
+        start_dir = os.path.abspath(repo_path)
+        
+        # 忽略规则
+        ignore_dirs = {'.git', '__pycache__', 'node_modules', 'venv', '.idea', '.vscode', 'dist', 'build', 'coverage', 'target'}
+        ignore_exts = {'.png', '.jpg', '.jpeg', '.gif', '.ico', '.svg', '.pyc', '.class', '.exe', '.dll', '.so'}
 
-# --- 使用示例 ---
-if __name__ == "__main__":
-    # 示例：拉取 requests 库进行分析
-    loader = GitHubLoader()
-    try:
-        url = "https://github.com/OpenBMB/ChatDev.git" 
-        local_path = loader.clone_repo(url)
-        print(f"仓库路径: {local_path}")
-        
-        files_map = loader.classify_files(local_path)
-        
-        print("\n--- 核心代码文件 (前5个) ---")
-        for f in files_map['source_code'][:5]:
-            print(f)
+        for root, dirs, files in os.walk(start_dir):
+            # 1. 过滤目录
+            dirs[:] = [d for d in dirs if d not in ignore_dirs]
             
-        print("\n--- 配置文件 (前5个) ---")
-        for f in files_map['configuration'][:5]:
-            print(f)
+            # 计算缩进
+            level = root.replace(start_dir, '').count(os.sep)
+            indent = '│   ' * (level - 1) + '├── ' if level > 0 else ''
+            
+            if level == 0:
+                tree_lines.append(f"📦 {os.path.basename(root)}")
+            else:
+                tree_lines.append(f"{indent}📂 {os.path.basename(root)}/")
+            
+            # 2. 过滤并打印文件
+            sub_indent = '│   ' * level + '├── '
+            for f in files:
+                _, ext = os.path.splitext(f)
+                if ext.lower() not in ignore_exts:
+                    tree_lines.append(f"{sub_indent}📄 {f}")
+                    
+        return "\n".join(tree_lines)
 
-    except Exception as e:
-        print(f"发生错误: {e}")
+    def smart_select_files(self, file_paths: List[str], max_files: int = 30) -> List[str]:
+        """
+        智能筛选核心文件：不仅仅看深度，更看重目录名和文件名
+        """
+        scored_files = []
+        
+        # 关键词权重配置
+        high_weight_keywords = ['core', 'main', 'app', 'server', 'api', 'service', 'model', 'controller', 'router', 'utils', 'lib', 'src']
+        low_weight_keywords = ['test', 'demo', 'example', 'sample', 'doc', 'mock', 'bench']
+        
+        for fpath in file_paths:
+            score = 0
+            lower_path = fpath.lower()
+            
+            # 1. 基础分：路径越浅，分数稍微高一点点（权重低，避免深层核心被埋没）
+            depth = fpath.count(os.sep)
+            score -= depth * 0.1
+            
+            # 2. 关键目录加分
+            for kw in high_weight_keywords:
+                if kw in lower_path:
+                    score += 5
+            
+            # 3. 垃圾目录减分
+            for kw in low_weight_keywords:
+                if kw in lower_path:
+                    score -= 10
+            
+            # 4. 关键文件后缀微调
+            if fpath.endswith('.py') or fpath.endswith('.js') or fpath.endswith('.ts') or fpath.endswith('.java') or fpath.endswith('.go'):
+                score += 2
+                
+            # 5. 特定核心文件名加分
+            filename = os.path.basename(fpath).lower()
+            if filename in ['main.py', 'app.py', 'index.js', 'server.go', 'application.java', 'api.py']:
+                score += 10
+            
+            scored_files.append((score, fpath))
+            
+        # 按分数从高到低排序
+        scored_files.sort(key=lambda x: x[0], reverse=True)
+        
+        # 选出前 max_files 个
+        selected = [item[1] for item in scored_files[:max_files]]
+        
+        # 重新按路径字母序排列，方便人类阅读
+        selected.sort()
+        
+        return selected

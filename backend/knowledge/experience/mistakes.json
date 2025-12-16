@@ -94,5 +94,9 @@
   {
     "q": "style named fill is not supported",
     "a": "Enclose text values in quotes to avoid syntax errors in chart definitions."
+  },
+  {
+    "q": "Unrecognized text in subgraph ID",
+    "a": "Do not use spaces or special characters in subgraph IDs; use quotes around IDs containing spaces."
   }
 ]

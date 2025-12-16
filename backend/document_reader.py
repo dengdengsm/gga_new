@@ -215,7 +215,48 @@ class DocumentAnalyzer(Agent):
                     print(f"⚠️ [UnifiedReader] Cleanup failed: {e}")
             
             # 注意：DashScope 的云端文件通常会自动过期或需要显式删除，视需求可在此调用 self.client.files.delete(file_id)
+    # 在 DocumentAnalyzer 类中添加以下方法
 
+    def analyze_code_file(self, file_path: str, project_root: str = None) -> str:
+        """
+        专门用于分析代码文件，提取结构化信息
+        """
+        try:
+            rel_path = os.path.relpath(file_path, project_root) if project_root else os.path.basename(file_path)
+            
+            # 读取文件内容（这里直接读取，因为是代码分析，通常是纯文本）
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+            
+            # 如果文件太长，进行截断（避免 Token 溢出）
+            max_chars = 15000 
+            if len(content) > max_chars:
+                content = content[:max_chars] + "\n...[Content Truncated]..."
+
+            prompt = (
+                f"You are a Senior Code Architect. Analyze the following source code file: '{rel_path}'.\n"
+                "Extract the following information in a structured format:\n\n"
+                "1. **File Summary**: A one-sentence description of what this file does.\n"
+                "2. **Key Functions/Classes**: List important class names and function signatures (def name(...)). Briefly explain the responsibility of each.\n"
+                "3. **Dependencies**: What major libraries or other internal modules does it import?\n\n"
+                "Code Content:\n"
+                "```\n"
+                f"{content}\n"
+                "```\n\n"
+                "Output must be concise and in Markdown format."
+            )
+            
+            # 调用 LLM (复用现有的 chat 接口)
+            response = self.chat(
+                messages=[{"role": "user", "content": prompt}],
+                system_prompt="You are a code analysis expert. Output concise technical summaries."
+            )
+            
+            return f"### File: {rel_path}\n{response}\n"
+            
+        except Exception as e:
+            print(f"❌ Error analyzing code {file_path}: {e}")
+            return f"### File: {os.path.basename(file_path)}\n[Analysis Failed: {str(e)}]\n"
 if __name__ == "__main__":
     # --- 测试代码 ---
     # 确保你设置了环境变量或在类里硬编码了 Key

@@ -21,6 +21,7 @@ from code_revise import CodeReviseAgent
 from utils import quick_validate_mermaid, preprocess_multi_files
 from document_reader import DocumentAnalyzer
 from project_manager import ProjectManager
+from git_loader import GitHubLoader
 
 # --- 配置 ---
 PROJECTS_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.projects"))
@@ -124,6 +125,12 @@ class OptimizeRequest(BaseModel):
     aiConfig: Optional[Dict[str, Any]] = None
     accessPassword: Optional[str] = None
     selectedModel: Optional[str] = None
+
+class GitHubAnalysisRequest(BaseModel):
+    repoUrl: str
+    diagramType: str = "auto"
+    aiConfig: Optional[Dict[str, Any]] = None
+    richness: float = 0.5
 # --- 3. Routes ---
 
 # === 项目管理接口 ===
@@ -515,6 +522,213 @@ async def generate_mermaid(request: GenerateRequest):
         import traceback
         traceback.print_exc()
         return {"mermaidCode": "", "error": str(e)}
+
+# === GitHub 分析接口 ===
+
+# === 在 tasks 变量定义之后，或其他函数定义附近添加这个后台处理函数 ===
+def process_github_background(task_id: str, repo_url: str, diagram_type: str, richness: float):
+    """GitHub 分析的后台任务逻辑"""
+    try:
+        # 1. 更新状态：克隆中
+        tasks[task_id].update({"status": "processing", "message": "正在克隆仓库..."})
+        
+        project_dir = project_manager.get_project_dir()
+        # 源代码存储路径 (与 uploads 隔离)
+        loader = GitHubLoader(base_dir=os.path.join(project_dir, "repos"))
+        upload_dir = os.path.join(project_dir, "uploads")
+        os.makedirs(upload_dir, exist_ok=True)
+        
+        # 2. 下载代码
+        print(f"   -> [Task {task_id}] Cloning {repo_url}...")
+        repo_path = loader.clone_repo(repo_url)
+        repo_name = os.path.basename(repo_path)
+        
+        # 3. 分析结构
+        tasks[task_id].update({"message": "正在分析文件结构..."})
+        files_map = loader.classify_files(repo_path)
+        tree_structure = loader.generate_tree_structure(repo_path)
+        
+        # 4. 深度分析核心代码
+        source_files = files_map['source_code']
+        # 使用智能筛选
+        max_files_to_analyze = 30 
+        selected_files = loader.smart_select_files(source_files, max_files=max_files_to_analyze)
+        
+        analysis_results = []
+        count = 0
+        ignored_files = set(source_files) - set(selected_files)
+        
+        print(f"   -> Smart selected {len(selected_files)} files from {len(source_files)} total sources.")
+        
+        for file_path in selected_files:
+            count += 1
+            tasks[task_id].update({"message": f"正在深度阅读 ({count}/{len(selected_files)}): {os.path.basename(file_path)}"})
+            
+            try:
+                res = doc_analyzer.analyze_code_file(file_path, project_root=repo_path)
+                analysis_results.append(res)
+            except Exception as e:
+                print(f"      ❌ Skipped {os.path.basename(file_path)}: {e}")
+            
+        # 5. 组装 Context (这是给 AI 看的最终内容)
+        full_context = (
+            f"# GitHub Repository Analysis: {repo_name}\n\n"
+            f"> Source URL: {repo_url}\n"
+            f"> Analysis Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+            f"## 1. Directory Structure\n"
+            f"```\n{tree_structure}\n```\n\n"
+            f"## 2. Core Logic Analysis\n"
+            f"{''.join(analysis_results)}\n\n"
+            f"## 3. Supplementary Info\n"
+            f"Total files scanned: {len(source_files)}. Files fully analyzed: {len(selected_files)}.\n"
+        )
+        
+        # ==========================================
+        # === [新增] 保存分析结果为 Context 文件 ===
+        # ==========================================
+        
+        # 命名为 "仓库名.md"
+        summary_filename = f"{repo_name}.md"
+        summary_file_path = os.path.join(upload_dir, summary_filename)
+        
+        # 写入文件
+        with open(summary_file_path, "w", encoding="utf-8") as f:
+            f.write(full_context)
+            
+        print(f"   💾 [Save] Context saved to: {summary_filename}")
+
+        # 添加到文件列表 (这样 generate_mermaid 扫描 uploads 时会自动带上它，前端也能看见)
+        try:
+            summary_record = {
+                "id": str(uuid.uuid4()),
+                "filename": summary_filename, # 前端显示 "smart-mermaid.md"
+                "status": "success",
+                "message": "GitHub 智能分析报告",
+                "timestamp": datetime.now().isoformat(),
+                "location": summary_file_path,
+                "size": len(full_context),
+                "isGithubAnalysis": True # 标记这是分析报告
+            }
+            project_manager.add_file_record(summary_record)
+        except Exception as e:
+            print(f"   ⚠️ Failed to register summary file: {e}")
+
+        # ==========================================
+        
+        user_query = f"Analyze the architecture of the GitHub repository '{repo_name}'. Use the Directory Tree to understand the full scope, and the Core File Analysis to understand the specific logic implementation."
+        
+        # 6. 生成图表 (逻辑保持不变)
+        tasks[task_id].update({"message": "AI 正在构建图表逻辑..."})
+        
+        if diagram_type == "auto":
+            route_res = router_agent.route_and_analyze(user_content=full_context, user_target=user_query)
+        else:
+            route_res = router_agent.analyze_specific_mode(
+                user_content=full_context, 
+                user_target=user_query, 
+                specific_type=diagram_type
+            )
+            
+        prompt_file = route_res.get("target_prompt_file", "classDiagram.md")
+        logic_analysis = route_res.get("analysis_content", "")
+        
+        tasks[task_id].update({"message": "正在生成 Mermaid 代码..."})
+        initial_code = code_gen_agent.generate_code(logic_analysis, prompt_file=prompt_file, richness=richness)
+        
+        # Code Revise
+        current_code = initial_code
+        max_retries = 3 
+        validation = {'valid': False, 'error': 'Not started'}
+
+        for i in range(max_retries + 1):
+            validation = quick_validate_mermaid(current_code)
+            if validation['valid']:
+                break
+            
+            error_msg = validation['error']
+            if i < max_retries:
+                tasks[task_id].update({"message": f"正在自动修复语法错误 ({i+1}/{max_retries})..."})
+                history = [{"code": current_code, "error": error_msg}]
+                current_code = code_revise_agent.revise_code(
+                    current_code, 
+                    error_message=error_msg, 
+                    previous_attempts=history
+                )
+
+        final_error = validation['error'] if not validation['valid'] else None
+        
+        # 保存历史记录 (History)
+        try:
+            hist_entry = {
+                "id": str(int(time.time() * 1000)),
+                "query": f"GitHub Analysis: {repo_name}",
+                "code": current_code,
+                "diagramType": diagram_type,
+                "timestamp": datetime.now().isoformat(),
+                "analysisSummary": logic_analysis
+            }
+            
+            p_dir = project_manager.get_project_dir()
+            hist_file = os.path.join(p_dir, "history.json")
+            
+            current_hist = []
+            if os.path.exists(hist_file):
+                with open(hist_file, "r", encoding="utf-8") as f:
+                    try: current_hist = json.load(f)
+                    except: current_hist = []
+            
+            current_hist.insert(0, hist_entry)
+            with open(hist_file, "w", encoding="utf-8") as f:
+                json.dump(current_hist, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"   ⚠️ Failed to save history: {e}")
+
+        # 7. 任务完成
+        print(f"✅ [Task {task_id}] GitHub 分析完成")
+        tasks[task_id] = {
+            "status": "success",
+            "message": "分析完成",
+            "result": {  
+                "mermaidCode": current_code,
+                "error": final_error,
+                "analysisSummary": logic_analysis
+            }
+        }
+        
+        # 注意：这里我们不再向 ProjectManager 注册 "raw repo" 的文件记录，
+        # 只注册了上面的 summary_record。这样前端只会显示 "repo.md"，
+        # 且 generate_mermaid 只会扫描到 "repo.md"，完美符合“包含总结但不包含源码”的需求。
+
+    except Exception as e:
+        print(f"❌ [Task {task_id}] Failed: {e}")
+        tasks[task_id] = {"status": "error", "message": str(e)}
+# === 修改后的接口 ===
+
+@app.post("/api/upload-github")
+async def analyze_github(request: GitHubAnalysisRequest, background_tasks: BackgroundTasks):
+    # 生成任务 ID
+    task_id = str(uuid.uuid4())
+    print(f"\n⚡ [GitHub] 收到请求，创建后台任务 ID: {task_id}")
+    
+    # 初始化任务状态
+    tasks[task_id] = {
+        "status": "pending",
+        "message": "任务初始化...",
+        "type": "github",
+        "repo": request.repoUrl
+    }
+    
+    # 启动后台任务
+    background_tasks.add_task(
+        process_github_background,
+        task_id,
+        request.repoUrl,
+        request.diagramType,
+        request.richness
+    )
+    
+    # 立即返回 ID，不等待处理
+    return {"status": "success", "taskId": task_id, "message": "后台分析已启动"}
 
 @app.post("/api/optimize-mermaid")
 async def optimize_mermaid(request: OptimizeRequest):

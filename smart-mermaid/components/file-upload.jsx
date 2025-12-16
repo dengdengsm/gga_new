@@ -3,12 +3,22 @@
 import { useState, useCallback, useEffect } from "react";
 import { useDropzone } from "react-dropzone";
 import { toast } from "sonner";
-import { Upload, FileText, Loader2, CheckCircle2, XCircle, Trash2, Image as ImageIcon, Plus, FileClock } from "lucide-react";
+import { Upload, FileText, Loader2, CheckCircle2, XCircle, Trash2, Image as ImageIcon, Plus, FileClock, Github } from "lucide-react";
 
-// 【修改】接收 autoBuild 参数，默认 true
-export function FileUpload({ autoBuild = true }) {
-  // 文件项结构: { id, filename, status, message, file?: File }
+// 引入 UI 组件
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "./ui/dialog";
+import { Button } from "./ui/button";
+import { Input } from "./ui/input";
+import { Label } from "./ui/label";
+
+export function FileUpload({ autoBuild = true, onCodeGenerated }) {
+  // 文件项结构: { id, filename, status, message, file?: File, isGithub?: boolean }
   const [fileList, setFileList] = useState([]);
+  
+  // GitHub 相关状态
+  const [isGithubOpen, setIsGithubOpen] = useState(false);
+  const [githubUrl, setGithubUrl] = useState("");
+  const [isAnalyzingGithub, setIsAnalyzingGithub] = useState(false);
 
   // 1. 初始化加载
   useEffect(() => {
@@ -41,12 +51,11 @@ export function FileUpload({ autoBuild = true }) {
     }));
   };
 
-  // 轮询 Effect
+  // 2. 核心轮询逻辑 (处理异步任务状态)
   useEffect(() => {
     const timer = setInterval(() => {
       setFileList(currentList => {
         // 筛选出 "processing" 或 "pending" 的任务进行轮询
-        // 注意：如果是 'uploaded' 状态（不自动构建），则不会进入轮询，符合预期
         const processingItems = currentList.filter(item => 
           (item.status === 'processing' || item.status === 'pending') && item.id
         );
@@ -54,22 +63,38 @@ export function FileUpload({ autoBuild = true }) {
         if (processingItems.length === 0) return currentList;
 
         processingItems.forEach(item => {
+          // 如果是临时ID (temp-开头)，跳过轮询，等待 handleGithubAnalysis 替换为真实 ID
+          if (typeof item.id === 'string' && item.id.startsWith('temp-')) return;
+
           fetch(`/api/tasks/${item.id}`)
             .then(res => res.json())
             .then(data => {
-              if (data.status && data.status !== item.status) {
-                if (data.status === 'success') {
-                  toast.success(`文档 "${item.filename || item.file?.name}" 分析完成`);
-                } else if (data.status === 'error') {
-                  toast.error(`文档 "${item.filename || item.file?.name}" 分析失败`);
-                }
-                
-                setFileList(prev => prev.map(curr => {
-                    if (curr.id === item.id) {
-                        return { ...curr, status: data.status, message: data.message };
+              // 检查任务状态是否有变化
+              if (data.status) {
+                const isStatusChanged = data.status !== item.status;
+                const isMessageChanged = data.message !== item.message;
+
+                if (isStatusChanged || isMessageChanged) {
+                  // 更新列表状态
+                  setFileList(prev => prev.map(curr => {
+                      if (curr.id === item.id) {
+                          return { ...curr, status: data.status, message: data.message };
+                      }
+                      return curr;
+                  }));
+
+                  // 处理完成状态
+                  if (data.status === 'success' && isStatusChanged) {
+                    toast.success(`任务 "${item.filename}" 完成`);
+                    
+                    // 如果是 GitHub 分析任务且有结果，触发回调将代码传给父组件
+                    if (data.result && data.result.mermaidCode && onCodeGenerated) {
+                        onCodeGenerated(data.result.mermaidCode);
                     }
-                    return curr;
-                }));
+                  } else if (data.status === 'error' && isStatusChanged) {
+                    toast.error(`任务失败: ${data.message}`);
+                  }
+                }
               }
             })
             .catch(e => console.error("Poll error:", e));
@@ -77,10 +102,10 @@ export function FileUpload({ autoBuild = true }) {
         
         return currentList; 
       });
-    }, 2000);
+    }, 2000); // 每2秒轮询一次
 
     return () => clearInterval(timer);
-  }, []);
+  }, [onCodeGenerated]);
 
   const onDrop = useCallback(async (acceptedFiles) => {
     if (acceptedFiles.length === 0) return;
@@ -101,7 +126,6 @@ export function FileUpload({ autoBuild = true }) {
 
       const formData = new FormData();
       formData.append("file", fileItem.file);
-      // 【修改】传递 autoBuild 标志
       formData.append("autoBuild", autoBuild); 
 
       try {
@@ -115,7 +139,6 @@ export function FileUpload({ autoBuild = true }) {
         const result = await response.json();
 
         if (result.status === "success") {
-          // 【修改】根据 autoBuild 决定后续显示的初始状态
           const nextStatus = autoBuild ? 'processing' : 'uploaded';
           const nextMsg = autoBuild ? '正在云端深度分析...' : '文件已保存 (待分析)';
 
@@ -124,7 +147,7 @@ export function FileUpload({ autoBuild = true }) {
                   return {
                       ...item,
                       id: result.taskId, 
-                      status: nextStatus, // 这里如果是 uploaded，就不会被轮询捕获
+                      status: nextStatus,
                       message: nextMsg
                   };
               }
@@ -146,20 +169,91 @@ export function FileUpload({ autoBuild = true }) {
         toast.error(`❌ 上传中断: ${fileItem.filename}`);
       }
     });
-  }, [autoBuild]); // 【修改】依赖项加入 autoBuild
+  }, [autoBuild]);
+
+  // 3. 处理 GitHub 分析请求 (异步模式)
+  const handleGithubAnalysis = async () => {
+    if (!githubUrl) {
+      toast.error("请输入有效的 GitHub 仓库地址");
+      return;
+    }
+
+    setIsAnalyzingGithub(true);
+    
+    // 生成临时 ID 占位
+    const tempId = "temp-" + Math.random().toString(36).substring(7);
+    const repoName = githubUrl.split('/').pop() || "GitHub Repo";
+    
+    // 立即在 UI 显示条目
+    const mockFile = {
+        id: tempId,
+        filename: `GitHub: ${repoName}`,
+        status: 'pending',
+        message: '正在提交请求...',
+        isGithub: true
+    };
+    setFileList(prev => [mockFile, ...prev]);
+    setIsGithubOpen(false); // 关闭弹窗
+
+    try {
+        const response = await fetch("/api/upload-github", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                repoUrl: githubUrl,
+                diagramType: "auto"
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.status === "success" && data.taskId) {
+            // 请求成功，将临时 ID 替换为后端返回的真实 Task ID
+            // 状态改为 processing，这样 useEffect 里的轮询逻辑就会接管它
+            setFileList(prev => prev.map(item => {
+                if (item.id === tempId) {
+                    return {
+                        ...item,
+                        id: data.taskId, // 关键：替换 ID
+                        status: 'processing',
+                        message: '任务已启动，正在排队...'
+                    };
+                }
+                return item;
+            }));
+            
+            toast.info("分析任务已在后台启动");
+        } else {
+            throw new Error(data.message || "启动失败");
+        }
+
+    } catch (e) {
+        console.error("GitHub Request Error:", e);
+        toast.error(`请求失败: ${e.message}`);
+        // 失败则移除临时条目
+        setFileList(prev => prev.filter(item => item.id !== tempId));
+    } finally {
+        setIsAnalyzingGithub(false);
+        setGithubUrl("");
+    }
+  };
 
   const removeFile = async (e, id) => {
     e.stopPropagation(); 
     setFileList(prev => prev.filter(item => item.id !== id));
-    try {
-        await fetch(`/api/files/${id}`, { method: 'DELETE' });
-    } catch(e) {
-        console.error("Delete error:", e);
+    // 只有真实文件才调用后端删除，GitHub 条目（如果没有对应文件记录）仅前端移除
+    if (!id.startsWith("temp-")) {
+        try {
+            await fetch(`/api/files/${id}`, { method: 'DELETE' });
+        } catch(e) {
+            // 忽略 404 等错误
+        }
     }
   };
 
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+  const { getRootProps, getInputProps, isDragActive, open } = useDropzone({
     onDrop,
+    noClick: true, // 禁用默认点击，以便我们自定义按钮
     accept: {
       'text/plain': ['.txt'],
       'text/markdown': ['.md'],
@@ -175,10 +269,10 @@ export function FileUpload({ autoBuild = true }) {
 
   return (
     <div className="flex flex-col h-full gap-2">
-      {/* 拖拽上传区域 */}
+      {/* 上传/操作区域 */}
       <div
         {...getRootProps()}
-        className={`flex-shrink-0 border-2 border-dashed rounded-lg transition-all cursor-pointer flex items-center justify-center gap-2
+        className={`flex-shrink-0 border-2 border-dashed rounded-lg transition-all flex items-center justify-center gap-2 relative
           ${isDragActive ? "border-primary bg-primary/5 scale-[0.99]" : "border-border hover:border-primary/50 hover:bg-muted/50"}
           ${hasFiles ? "h-14 flex-row px-4" : "h-full flex-col p-6"}
         `}
@@ -186,35 +280,79 @@ export function FileUpload({ autoBuild = true }) {
         <input {...getInputProps()} />
         
         {hasFiles ? (
+             // --- 紧凑模式 (已有文件) ---
              <>
-                <div className="p-1.5 bg-primary/10 rounded-full flex-shrink-0">
-                    <Plus className="h-4 w-4 text-primary" />
+                <div className="flex items-center gap-2 flex-1">
+                    <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        onClick={(e) => { e.stopPropagation(); open(); }}
+                        className="h-8 w-8 rounded-full bg-primary/10 hover:bg-primary/20"
+                        title="上传本地文件"
+                    >
+                        <Plus className="h-4 w-4 text-primary" />
+                    </Button>
+                    
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={(e) => { e.stopPropagation(); setIsGithubOpen(true); }}
+                        className="h-8 w-8 rounded-full bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700"
+                        title="从 GitHub 导入"
+                    >
+                        <Github className="h-4 w-4" />
+                    </Button>
+
+                    <p className="text-xs text-muted-foreground ml-2">
+                        {isDragActive ? "放手添加文件" : "添加更多..."}
+                    </p>
                 </div>
-                <p className="text-xs text-muted-foreground truncate">
-                    {isDragActive ? "放手添加文件" : "点击或拖拽添加更多"}
-                </p>
              </>
         ) : (
+             // --- 完整模式 (空状态) ---
              <>
-                <div className="p-3 bg-primary/10 rounded-full">
+                <div className="p-3 bg-primary/10 rounded-full mb-2">
                   {isDragActive ? (
                     <FileText className="h-6 w-6 text-primary animate-bounce" />
                   ) : (
                     <Upload className="h-6 w-6 text-primary" />
                   )}
                 </div>
-                <div className="text-center">
-                  <p className="text-sm font-medium">
-                    {isDragActive ? "放手即可上传" : "点击或拖放文件到此处"}
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    支持 .md, .txt, .pdf, .docx, .png, .jpg
-                  </p>
-                  {!autoBuild && (
-                      <p className="text-[10px] text-orange-500 mt-2">
-                          * 当前模式仅上传，生成时才进行分析
-                      </p>
-                  )}
+                
+                <div className="text-center space-y-4">
+                  <div>
+                    <p className="text-sm font-medium">
+                        {isDragActive ? "放手即可上传" : "拖拽文件到此处，或选择操作"}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                        支持 .md, .txt, .pdf, .docx, .png, .jpg
+                    </p>
+                  </div>
+
+                  {/* 两个并排按钮 */}
+                  <div className="flex items-center justify-center gap-3">
+                      <Button 
+                        variant="outline" 
+                        size="sm"
+                        onClick={(e) => { e.stopPropagation(); open(); }}
+                        className="gap-2"
+                      >
+                        <FileText className="h-4 w-4" />
+                        选择文件
+                      </Button>
+                      
+                      <span className="text-xs text-muted-foreground">- 或 -</span>
+                      
+                      <Button 
+                        variant="default" 
+                        size="sm"
+                        onClick={(e) => { e.stopPropagation(); setIsGithubOpen(true); }}
+                        className="gap-2 bg-black hover:bg-gray-800 text-white dark:bg-white dark:text-black dark:hover:bg-gray-200"
+                      >
+                        <Github className="h-4 w-4" />
+                        GitHub 仓库
+                      </Button>
+                  </div>
                 </div>
              </>
         )}
@@ -227,11 +365,14 @@ export function FileUpload({ autoBuild = true }) {
             {fileList.map((item) => {
               const name = item.filename || item.file?.name || "Unknown File";
               const isImage = name.match(/\.(jpg|jpeg|png|gif)$/i);
+              const isGithub = item.isGithub || name.startsWith("GitHub:");
 
               return (
                 <div key={item.id} className="p-2.5 flex items-center gap-3 hover:bg-muted/50 transition-colors group">
                   <div className="flex-shrink-0">
-                    {isImage ? (
+                    {isGithub ? (
+                        <Github className="h-6 w-6 text-black dark:text-white" />
+                    ) : isImage ? (
                       <ImageIcon className="h-6 w-6 text-blue-500" />
                     ) : (
                       <FileText className="h-6 w-6 text-orange-500" />
@@ -278,6 +419,48 @@ export function FileUpload({ autoBuild = true }) {
           </div>
         </div>
       )}
+
+      {/* GitHub 输入弹窗 */}
+      <Dialog open={isGithubOpen} onOpenChange={setIsGithubOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>从 GitHub 导入</DialogTitle>
+            <DialogDescription>
+              输入公开仓库的 URL，我们将自动分析其代码结构并生成图表。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label htmlFor="github-url">仓库地址 (URL)</Label>
+              <Input
+                id="github-url"
+                placeholder="https://github.com/username/repo"
+                value={githubUrl}
+                onChange={(e) => setGithubUrl(e.target.value)}
+                disabled={isAnalyzingGithub}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsGithubOpen(false)} disabled={isAnalyzingGithub}>
+                取消
+            </Button>
+            <Button onClick={handleGithubAnalysis} disabled={isAnalyzingGithub}>
+              {isAnalyzingGithub ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    启动中...
+                  </>
+              ) : (
+                  <>
+                    <Github className="mr-2 h-4 w-4" />
+                    开始分析
+                  </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

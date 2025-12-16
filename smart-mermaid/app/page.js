@@ -209,9 +209,19 @@ export default function Home() {
   const handleDrillDown = (nodeLabel) => {
     if (!nodeLabel) return;
 
-    // 拼接提示词（英文）
-    const drillDownPrompt = `\n\nPlease generate a detailed subgraph for the node [${nodeLabel}] showing its internal logic.`;
-    const newText = inputText + drillDownPrompt;
+    const promptText = `Please generate a detailed subgraph for the node [${nodeLabel}] showing its internal logic.`;
+    
+    let newText;
+
+    if (useFileContext) {
+      // 依赖文件模式：直接替代输入框内容
+      // 因为在 RAG 模式下，上下文主要来自文件，Prompt 应保持清晰简洁
+      newText = promptText;
+    } else {
+      // 非依赖文件模式（纯文本模式）：合并输入框内容
+      // 需要保留之前的上下文，否则 AI 会丢失语境
+      newText = inputText + "\n\n" + promptText;
+    }
 
     // 更新输入框内容
     setInputText(newText);
