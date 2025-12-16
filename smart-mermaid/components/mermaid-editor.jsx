@@ -1,15 +1,15 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { 
   Copy, Check, Wand2, ArrowLeftRight, 
   History, Star, X, Trash2,
-  ChevronDown, ChevronUp // 新增图标
+  ChevronDown, ChevronUp, Layers, Network, ArrowDownCircle // 新增图标
 } from "lucide-react";
-import { copyToClipboard } from "@/lib/utils";
+import { copyToClipboard, parseMermaidNodes } from "@/lib/utils"; // 引入 parseMermaidNodes
 import { autoFixMermaidCode, toggleMermaidDirection } from "@/lib/mermaid-fixer";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -32,14 +32,18 @@ export function MermaidEditor({
   errorMessage, 
   hasError,
   onHistoryChange,
-  isCollapsed,        // 新增 prop
-  onToggleCollapse    // 新增 prop
+  isCollapsed,        
+  onToggleCollapse,
+  onDrillDown         // 新增 prop: 下钻分析回调
 }) {
   const [copied, setCopied] = useState(false);
   const [isFixing, setIsFixing] = useState(false);
   const [showOptimize, setShowOptimize] = useState(false);
   const [optTab, setOptTab] = useState("suggestions");
   
+  // 编辑器视图状态：'code' | 'nodes'
+  const [editorView, setEditorView] = useState("code"); 
+
   const [displaySuggestions, setDisplaySuggestions] = useState([]);
   const [activeGlobalRules, setActiveGlobalRules] = useState([]);
   
@@ -47,6 +51,12 @@ export function MermaidEditor({
   const [isOptimizing, setIsOptimizing] = useState(false);
   
   const [rememberGlobal, setRememberGlobal] = useState(false);
+
+  // 解析当前代码中的节点列表
+  const nodes = useMemo(() => {
+    if (!code) return [];
+    return parseMermaidNodes(code);
+  }, [code]);
 
   const handleChange = (e) => {
     onChange(e.target.value);
@@ -292,10 +302,7 @@ export function MermaidEditor({
         </div>
       </div>
 
-      {/* 【布局调整】
-         将“继续优化面板”移动到代码编辑器上方。
-         这样点击展开时，它是向下推开代码框（或位于代码框之上）。
-      */}
+      {/* 优化建议面板 */}
       {showOptimize && (
         <div className="mb-2 border rounded-md p-2 h-48 flex flex-col bg-muted/10 flex-shrink-0">
           <Tabs value={optTab} onValueChange={setOptTab} className="flex flex-col h-full">
@@ -417,19 +424,80 @@ export function MermaidEditor({
 
       {/* 代码编辑器容器 (可折叠) */}
       {!isCollapsed && (
-        <div className="flex-1 min-h-0">
-          <Textarea
-            value={code}
-            onChange={handleChange}
-            placeholder="生成的 Mermaid 代码将显示在这里..."
-            className="w-full h-full font-mono text-sm mermaid-editor overflow-y-auto resize-none"
-            disabled={isFixing || isOptimizing}
-            spellCheck={false}
-            autoComplete="off"
-            autoCorrect="off"
-            autoCapitalize="off"
-          />
-        </div>
+        <Tabs value={editorView} onValueChange={setEditorView} className="flex-1 min-h-0 flex flex-col">
+          <div className="flex items-center px-1 mb-1">
+             <TabsList className="h-7 p-0 bg-transparent gap-2">
+                <TabsTrigger 
+                  value="code" 
+                  className="data-[state=active]:bg-muted data-[state=active]:shadow-none border border-transparent data-[state=active]:border-border h-7 text-xs px-3 rounded-md"
+                >
+                  <Copy className="h-3 w-3 mr-1" />
+                  代码编辑
+                </TabsTrigger>
+                <TabsTrigger 
+                  value="nodes"
+                  className="data-[state=active]:bg-muted data-[state=active]:shadow-none border border-transparent data-[state=active]:border-border h-7 text-xs px-3 rounded-md"
+                  disabled={!code}
+                >
+                   <Layers className="h-3 w-3 mr-1" />
+                   节点列表 ({nodes.length})
+                </TabsTrigger>
+             </TabsList>
+          </div>
+
+          <TabsContent value="code" className="flex-1 min-h-0 mt-0">
+            <Textarea
+              value={code}
+              onChange={handleChange}
+              placeholder="生成的 Mermaid 代码将显示在这里..."
+              className="w-full h-full font-mono text-sm mermaid-editor overflow-y-auto resize-none"
+              disabled={isFixing || isOptimizing}
+              spellCheck={false}
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+            />
+          </TabsContent>
+
+          <TabsContent value="nodes" className="flex-1 min-h-0 mt-0 overflow-hidden border rounded-md">
+             {nodes.length > 0 ? (
+               <div className="h-full overflow-y-auto p-2 space-y-2 bg-muted/10">
+                  {nodes.map((node) => (
+                    <div 
+                      key={node.id} 
+                      className="flex items-center justify-between bg-card p-2 rounded-md border shadow-sm hover:border-primary/50 transition-colors"
+                    >
+                      <div className="flex items-center gap-2 overflow-hidden">
+                        <div className="h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 text-primary">
+                           <Network className="h-3 w-3" />
+                        </div>
+                        <div className="flex flex-col min-w-0">
+                          <span className="text-sm font-medium truncate" title={node.label}>{node.label}</span>
+                          <span className="text-xs text-muted-foreground truncate font-mono">ID: {node.id}</span>
+                        </div>
+                      </div>
+                      
+                      <Button 
+                        size="sm" 
+                        variant="ghost"
+                        className="h-7 text-xs gap-1 hover:bg-primary hover:text-primary-foreground"
+                        onClick={() => onDrillDown && onDrillDown(node.label)}
+                        title={`生成"${node.label}"的子图`}
+                      >
+                         <ArrowDownCircle className="h-3.5 w-3.5" />
+                         生成子图
+                      </Button>
+                    </div>
+                  ))}
+               </div>
+             ) : (
+               <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+                  <Network className="h-8 w-8 mb-2 opacity-20" />
+                  <p className="text-sm">未检测到有效节点</p>
+               </div>
+             )}
+          </TabsContent>
+        </Tabs>
       )}
     </div>
   );

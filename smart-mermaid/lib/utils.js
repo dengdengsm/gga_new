@@ -83,3 +83,40 @@ export async function copyToClipboard(text) {
     return false;
   }
 }
+
+/**
+ * Parses Mermaid code to extract nodes (ID and Label)
+ * Primarily supports Flowchart syntax
+ * @param {string} code - The Mermaid code
+ * @returns {Array<{id: string, label: string}>} - List of nodes
+ */
+export function parseMermaidNodes(code) {
+  if (!code) return [];
+  
+  const nodes = new Map();
+  
+  // Clean comments
+  const cleanCode = code.replace(/%%.*$/gm, '');
+
+  // Regex to match node definitions in Flowcharts
+  // Matches patterns like: id[Label], id(Label), id{Label}, id((Label)), etc.
+  // Group 1: ID
+  // Group 2: Quote (optional)
+  // Group 3: Label content
+  const regex = /([a-zA-Z0-9_\-]+)\s*(?:\[|\[\[|\(|\[\(|\(\(|>|\{|\{\{|\[\/|\[\\)\s*(["']?)(.*?)\2\s*(?:\]|\]\]|\)|-|\)\)|\]|\}|\}\}|\]|\]\/)/g;
+  
+  let match;
+  while ((match = regex.exec(cleanCode)) !== null) {
+    const id = match[1];
+    const label = match[3];
+    
+    // Filter out reserved keywords or style definitions if they match accidentally
+    if (['graph', 'flowchart', 'subgraph', 'style', 'classDef', 'click', 'linkStyle'].includes(id)) continue;
+
+    if (!nodes.has(id)) {
+      nodes.set(id, { id, label: label ? label.trim() : id });
+    }
+  }
+
+  return Array.from(nodes.values());
+}

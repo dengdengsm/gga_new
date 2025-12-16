@@ -146,17 +146,18 @@ export default function Home() {
     setHasError(hasErr);
   };
 
-  // const handleModelChange = useCallback((modelId) => {
-  //   console.log('Selected model:', modelId);
-  // }, []);
+  // 修改：handleGenerateClick 接收可选参数 overrideText
+  // 这样可以在下钻分析等场景下，直接使用构建好的文本进行生成，而不必等待 state 更新
+  const handleGenerateClick = async (overrideText = null) => {
+    // 如果 overrideText 是事件对象（点击事件），则忽略它，使用 inputText
+    const textToUse = (typeof overrideText === 'string') ? overrideText : inputText;
 
-  const handleGenerateClick = async () => {
-    if (!inputText.trim()) {
+    if (!textToUse.trim()) {
       toast.error("请输入文本内容");
       return;
     }
 
-    if (!isWithinCharLimit(inputText, maxChars)) {
+    if (!isWithinCharLimit(textToUse, maxChars)) {
       toast.error(`文本超过${maxChars}字符限制`);
       return;
     }
@@ -166,7 +167,7 @@ export default function Home() {
     try {
       // 传递所有控制参数，包括 richness
       const { mermaidCode: generatedCode, error } = await generateMermaidFromText(
-        inputText,
+        textToUse,
         diagramType,
         null, 
         useGraph,
@@ -187,7 +188,7 @@ export default function Home() {
       setMermaidCode(generatedCode);
       try {
         addHistoryEntry({
-          query: inputText,
+          query: textToUse,
           code: generatedCode,
           diagramType
         });
@@ -202,6 +203,26 @@ export default function Home() {
     } finally {
       setIsGenerating(false);
     }
+  };
+
+  // 新增：处理下钻分析
+  const handleDrillDown = (nodeLabel) => {
+    if (!nodeLabel) return;
+
+    // 拼接提示词（英文）
+    const drillDownPrompt = `\n\nPlease generate a detailed subgraph for the node [${nodeLabel}] showing its internal logic.`;
+    const newText = inputText + drillDownPrompt;
+
+    // 更新输入框内容
+    setInputText(newText);
+    
+    // 切换到手动输入 Tab，让用户看到变化
+    setLeftTab("manual");
+
+    // 触发生成（传入最新的文本，避免等待 state 更新）
+    handleGenerateClick(newText);
+    
+    toast.info(`正在生成节点 "${nodeLabel}" 的子图...`);
   };
 
   return (
@@ -285,7 +306,7 @@ export default function Home() {
 
                   <div className="h-16 flex items-center gap-2 flex-shrink-0 pt-2">
                     <Button
-                      onClick={handleGenerateClick}
+                      onClick={() => handleGenerateClick()} // 显式调用，不传参
                       disabled={isGenerating || !inputText.trim() || !isWithinCharLimit(inputText, maxChars)}
                       className="h-10 flex-1 shadow-sm"
                     >
@@ -319,6 +340,8 @@ export default function Home() {
                       // 传递状态
                       isCollapsed={isEditorCollapsed}
                       onToggleCollapse={() => setIsEditorCollapsed(!isEditorCollapsed)}
+                      // 传递下钻回调
+                      onDrillDown={handleDrillDown} 
                     />
                   </div>
                 </div>
