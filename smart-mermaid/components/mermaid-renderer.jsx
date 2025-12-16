@@ -85,7 +85,7 @@ export function MermaidRenderer({ mermaidCode, onChange, onErrorChange }) {
 
         mermaid.initialize({
           startOnLoad: false,
-          theme: 'neutral',
+          theme: 'default',
           securityLevel: 'loose',
           // 1. 全局配置：尝试启用 elk (部分图表类型支持)
           flowchart: {

@@ -57,7 +57,7 @@ class CodeReviseAgent:
             with open(json_path, 'w', encoding='utf-8') as f:
                 json.dump([], f)
 
-    def revise_code(self, raw_code: str, error_message: str = "", previous_attempts: List[Dict] = None, language: str = "mermaid") -> str:
+    def revise_code(self, raw_code: str, error_message: str = "", previous_attempts: List[Dict] = None, language: str = "mermaid", use_mistake_book:bool  = False) -> str:
         """
         核心功能：接收代码和(可选的)报错信息，利用 RAG 检索策略进行修复
         """
@@ -66,12 +66,14 @@ class CodeReviseAgent:
         # 1. RAG 检索策略
         # 如果有报错信息，直接用报错去查 QA 库 (查到了就是以前踩过的坑)
         # 如果没有报错(只是预检)，则用代码片段去查通用的 Markdown 语法书
-        search_query = error_message if error_message else raw_code[:200]
-        retrieved_docs = self.rag.search(query=search_query, top_k=6)
-        
-        reference_context = "\n- ".join(retrieved_docs)
-        if not reference_context:
-            reference_context = "No specific past experience found. Follow standard syntax."
+        reference_context = ""
+        if use_mistake_book:
+            search_query = error_message if error_message else raw_code[:200]
+            retrieved_docs = self.rag.search(query=search_query, top_k=6)
+            
+            reference_context = "\n- ".join(retrieved_docs)
+            if not reference_context:
+                reference_context = "No specific past experience found. Follow standard syntax."
 
         print(f"   [RAG 知识召回]: 检索到 {len(retrieved_docs)} 条相关建议")
 

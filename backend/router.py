@@ -36,38 +36,38 @@ class RouterAgent:
         except FileNotFoundError:
             return ""
 
-    def route_and_analyze(self, user_content: str, user_target:str = "",) -> Dict[str, Any]:
+    def route_and_analyze(self, user_content: str, user_target:str = "",use_experience:bool = False) -> Dict[str, Any]:
         """
         核心功能：分析需求 -> 检索经验 -> 制定策略
         (已重构：内置 Prompt，不再依赖外部文件，统一管理参数)
         """
         print(f"⚡ Router 正在分析需求 (学习模式: {'开启' if self.learn_mode else '关闭'})...")
 
-        # 1. RAG 检索：看看以前有没有画过类似的图
-        # search() 返回的是 list of strings (即 'a'/设计思路)
-        retrieved_experiences = self.rag.search_score(query=user_target, top_k=10)
      
         # 2. 构建经验上下文 (Dynamic RAG Section)
+        
         experience_section = ""
-        if retrieved_experiences:
-            print(f"   [RAG] 联想到 {len(retrieved_experiences)} 条相关设计思路")
-            
-            # 拼接具体经验列表
-            context_list = "\n".join([f"{idx+1}. {exp}" for idx, exp in enumerate(retrieved_experiences)])
-            
-            # 构造经验指令块
-            experience_section = (
-                "\n\n"
-                "### 🧠 CRITICAL REFERENCE (RAG MEMORY)\n"
-                "The following are **SUCCESSFUL PAST STRATEGIES** retrieved from your memory bank.\n"
-                "**INSTRUCTION**: You MUST prioritized these strategies. If a past case used a specific diagram type for a similar scenario, **COPY THAT CHOICE**.\n"
-                "**Attention**: Pay more attention to the most popular strategies, for that is the most accepted, too.  "
-                "**The diagram type you choose should be suitable for the user's requirement:**\n"
-                "--------------------------------------------------\n"
-                f"{context_list}\n"
-            )
-        else:
-            print("   [RAG] 无相关经验，使用通用策略。")
+        if use_experience:
+            retrieved_experiences = self.rag.search_score(query=user_target, top_k=10)
+            if retrieved_experiences:
+                print(f"   [RAG] 联想到 {len(retrieved_experiences)} 条相关设计思路")
+                
+                # 拼接具体经验列表
+                context_list = "\n".join([f"{idx+1}. {exp}" for idx, exp in enumerate(retrieved_experiences)])
+                
+                # 构造经验指令块
+                experience_section = (
+                    "\n\n"
+                    "### 🧠 CRITICAL REFERENCE (RAG MEMORY)\n"
+                    "The following are **SUCCESSFUL PAST STRATEGIES** retrieved from your memory bank.\n"
+                    "**INSTRUCTION**: You MUST prioritized these strategies. If a past case used a specific diagram type for a similar scenario, **COPY THAT CHOICE**.\n"
+                    "**Attention**: Pay more attention to the most popular strategies, for that is the most accepted, too.  "
+                    "**The diagram type you choose should be suitable for the user's requirement:**\n"
+                    "--------------------------------------------------\n"
+                    f"{context_list}\n"
+                )
+            else:
+                print("   [RAG] 无相关经验，使用通用策略。")
 
         
         # 3. 构造完整 System Prompt (原 router.md + 动态逻辑)
@@ -129,35 +129,35 @@ class RouterAgent:
                 "analysis_content": user_content[:2000]
             }
         
-    def analyze_specific_mode(self, user_content: str, user_target: str, specific_type: str) -> Dict[str, Any]:
+    def analyze_specific_mode(self, user_content: str, user_target: str, specific_type: str, use_experience:bool = False) -> Dict[str, Any]:
         """
         【新增】定向分析模式：当用户明确指定图表类型时调用
         跳过选型步骤，直接生成针对该图表的分析内容。
         """
         print(f"⚡ Router 进入定向分析模式 -> 目标类型: {specific_type}\n")
-        # 1. 依然尝试检索相关经验 (可能包含针对该特定图表的画法技巧)
-        retrieved_experiences = self.rag.search_score(query=user_target, top_k=5)
-        experience_context = ""
-        if retrieved_experiences:
-            print(f"   [RAG] 联想到 {len(retrieved_experiences)} 条相关设计思路")
-            experience_context = "\n### Reference Design Strategies (From Past Success):\n"
-            for idx, exp in enumerate(retrieved_experiences):
-                experience_context += f"{idx+1}. {exp}\n"
-        else:
-            print("   [RAG] 无相关经验，使用通用策略。")
-        if retrieved_experiences:
-            # 如果有经验，就加一段“狠话”
-            experience_instruction = (
-                "\n\n"
-                "### 🧠 CRITICAL REFERENCE (RAG MEMORY)\n"
-                "The following are **SUCCESSFUL PAST STRATEGIES** retrieved from your memory bank.\n"
-                f"**INSTRUCTION**: You can learn only from the {specific_type} strategies, .\nOther type of diagram has little value to learn from.\n"
-                "--------------------------------------------------\n"
-            )
-            # 拼装：指令 + 具体的经验列表
-            experience_section = experience_instruction + experience_context
-        else:
-            experience_section = ""
+        experience_section = ""
+        if use_experience:
+            retrieved_experiences = self.rag.search_score(query=user_target, top_k=5)
+            
+            if retrieved_experiences:
+                print(f"   [RAG] 联想到 {len(retrieved_experiences)} 条相关设计思路")
+                experience_context = "\n### Reference Design Strategies (From Past Success):\n"
+                for idx, exp in enumerate(retrieved_experiences):
+                    experience_context += f"{idx+1}. {exp}\n"
+            else:
+                print("   [RAG] 无相关经验，使用通用策略。")
+            if retrieved_experiences:
+                # 如果有经验，就加一段“狠话”
+                experience_instruction = (
+                    "\n\n"
+                    "### 🧠 CRITICAL REFERENCE (RAG MEMORY)\n"
+                    "The following are **SUCCESSFUL PAST STRATEGIES** retrieved from your memory bank.\n"
+                    f"**INSTRUCTION**: You can learn only from the {specific_type} strategies, .\nOther type of diagram has little value to learn from.\n"
+                    "--------------------------------------------------\n"
+                )
+                # 拼装：指令 + 具体的经验列表
+                experience_section = experience_instruction + experience_context
+                
         # 2. 构造定向 Prompt
         system_prompt = (
             f"You are a Visualization Expert. The user has EXPLICITLY requested a '{specific_type}' diagram.\n"

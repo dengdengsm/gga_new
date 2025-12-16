@@ -92,6 +92,8 @@ class GenerateRequest(BaseModel):
     aiConfig: Optional[Dict[str, Any]] = None
     useGraph: bool = True 
     useFileContext: bool = True # 是否使用文件上下文
+    useHistory:bool = False
+    useMistakes:bool = False
     richness:float = 0.5
 
 class FixRequest(BaseModel):
@@ -444,14 +446,15 @@ async def generate_mermaid(request: GenerateRequest):
         
         if diagram_type == "auto":
             # 自动选型模式
-            route_res = router_agent.route_and_analyze(user_content=context, user_target=user_query)
+            route_res = router_agent.route_and_analyze(user_content=context, user_target=user_query,use_experience=request.useHistory)
         else:
             # 定向生成模式
             print(f"   -> 用户强制指定类型: {diagram_type}")
             route_res = router_agent.analyze_specific_mode(
                 user_content=context, 
                 user_target=user_query, 
-                specific_type=diagram_type
+                specific_type=diagram_type,
+                use_experience=request.useHistory
             )
             
         prompt_file = route_res.get("target_prompt_file", "flowchart.md")
@@ -506,7 +509,8 @@ async def generate_mermaid(request: GenerateRequest):
                     current_code = code_revise_agent.revise_code(
                         current_code, 
                         error_message=error_msg, 
-                        previous_attempts=attempt_history
+                        previous_attempts=attempt_history,
+                        use_mistake_book=request.useMistakes
                     )
                 else:
                     print("   ⚠️ CodeReviseAgent 未加载，无法进行修复")

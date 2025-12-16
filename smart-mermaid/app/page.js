@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { Wand2, Network } from "lucide-react"; 
+import { Wand2, Network } from "lucide-react";
 import { Header } from "@/components/header";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { TextInput } from "@/components/text-input";
@@ -35,12 +35,14 @@ export default function Home() {
   const [hasCustomConfig, setHasCustomConfig] = useState(false);
 
   // --- 生成策略状态 (由 GenerationControls 控制) ---
-  const [useGraph, setUseGraph] = useState(false); 
-  const [useFileContext, setUseFileContext] = useState(true); 
+  const [useGraph, setUseGraph] = useState(false);
+  const [useFileContext, setUseFileContext] = useState(true);
+  const [useHistory, setUseHistory] = useState(false);
+  const [useMistakes, setUseMistakes] = useState(false);
   const [richness, setRichness] = useState(0.5); // 新增：丰富度参数
 
   const [renderMode, setRenderMode] = useState("mermaid");
-  
+
   const [leftTab, setLeftTab] = useState("manual");
   const [historyEntries, setHistoryEntries] = useState([]);
 
@@ -105,17 +107,17 @@ export default function Home() {
 
   // --- 知识图谱轮询逻辑 ---
   const fetchGraphData = async () => {
-    if (!useGraph && renderMode === 'graph') return; 
+    if (!useGraph && renderMode === 'graph') return;
 
     try {
       const res = await fetch(`${API_URL}/api/graph/data`);
       if (res.ok) {
         const data = await res.json();
         setGraphData(prev => {
-           if (prev.nodes.length !== data.nodes.length || prev.links.length !== data.links.length) {
-               return data;
-           }
-           return prev; 
+          if (prev.nodes.length !== data.nodes.length || prev.links.length !== data.links.length) {
+            return data;
+          }
+          return prev;
         });
       }
     } catch (error) {
@@ -139,7 +141,7 @@ export default function Home() {
         clearInterval(graphPollingInterval.current);
       }
     };
-  }, [renderMode, useGraph]); 
+  }, [renderMode, useGraph]);
 
   const handleErrorChange = (error, hasErr) => {
     setErrorMessage(error);
@@ -169,10 +171,12 @@ export default function Home() {
       const { mermaidCode: generatedCode, error } = await generateMermaidFromText(
         textToUse,
         diagramType,
-        null, 
+        null,
         useGraph,
         useFileContext,
-        richness // 传递丰富度
+        richness,
+        useHistory,  // 传入历史经验开关
+        useMistakes
       );
 
       if (error) {
@@ -210,7 +214,7 @@ export default function Home() {
     if (!nodeLabel) return;
 
     const promptText = `Please generate a detailed subgraph for the node [${nodeLabel}] showing its internal logic.`;
-    
+
     let newText;
 
     if (useFileContext) {
@@ -225,13 +229,13 @@ export default function Home() {
 
     // 更新输入框内容
     setInputText(newText);
-    
+
     // 切换到手动输入 Tab，让用户看到变化
     setLeftTab("manual");
 
     // 触发生成（传入最新的文本，避免等待 state 更新）
     handleGenerateClick(newText);
-    
+
     toast.info(`正在生成节点 "${nodeLabel}" 的子图...`);
   };
 
@@ -252,34 +256,36 @@ export default function Home() {
             <div className="col-span-1 flex flex-col h-full overflow-hidden">
 
               <Tabs value={leftTab} onValueChange={setLeftTab} className="flex flex-col h-full">
-                
+
                 {/* --- 顶部工具栏 (整合了 Tabs 和 设置) --- */}
                 <div className="flex justify-between items-center pb-3 gap-2 flex-wrap">
-                    {/* 左侧：Tabs */}
-                    <TabsList className="h-9">
-                      <TabsTrigger value="manual">手动输入</TabsTrigger>
-                      <TabsTrigger value="file">文件上传</TabsTrigger>
-                      <TabsTrigger value="history">历史记录</TabsTrigger>
-                    </TabsList>
+                  {/* 左侧：Tabs */}
+                  <TabsList className="h-9">
+                    <TabsTrigger value="manual">手动输入</TabsTrigger>
+                    <TabsTrigger value="file">文件上传</TabsTrigger>
+                    <TabsTrigger value="history">历史记录</TabsTrigger>
+                  </TabsList>
 
-                    {/* 右侧：图表类型 + 生成策略设置 */}
-                    <div className="flex items-center gap-2 flex-1 justify-end min-w-0">
-                       <div className="w-[140px] flex-shrink-0">
-                          <DiagramTypeSelector
-                            value={diagramType}
-                            onChange={handleDiagramTypeChange}
-                          />
-                       </div>
-                       
-                       <GenerationControls 
-                          useFileContext={useFileContext}
-                          setUseFileContext={setUseFileContext}
-                          useGraph={useGraph}
-                          setUseGraph={setUseGraph}
-                          richness={richness}
-                          setRichness={setRichness}
-                       />
+                  {/* 右侧：图表类型 + 生成策略设置 */}
+                  <div className="flex items-center gap-2 flex-1 justify-end min-w-0">
+                    <div className="w-[140px] flex-shrink-0">
+                      <DiagramTypeSelector
+                        value={diagramType}
+                        onChange={handleDiagramTypeChange}
+                      />
                     </div>
+
+                    <GenerationControls
+                      useFileContext={useFileContext}
+                      setUseFileContext={setUseFileContext}
+                      useGraph={useGraph}
+                      setUseGraph={setUseGraph}
+                      richness={richness}
+                      useMistakes={useMistakes}
+                      setUseMistakes={setUseMistakes}
+                      setRichness={setRichness}
+                    />
+                  </div>
                 </div>
 
                 {/* --- 下方内容区域 --- */}
@@ -289,9 +295,9 @@ export default function Home() {
                      如果编辑器展开，保持固定高度。
                   */}
                   <div className={cn(
-                      "flex-shrink-0 transition-all duration-300",
-                      isEditorCollapsed ? "flex-1 min-h-0" : "h-40 md:h-52"
-                    )}>
+                    "flex-shrink-0 transition-all duration-300",
+                    isEditorCollapsed ? "flex-1 min-h-0" : "h-40 md:h-52"
+                  )}>
                     <TabsContent value="manual" className="h-full mt-0">
                       <TextInput
                         value={inputText}
@@ -338,9 +344,9 @@ export default function Home() {
                       如果编辑器被折叠，它仅占用内容高度 (h-auto)，不占用剩余空间。
                   */}
                   <div className={cn(
-                      "pt-2 transition-all duration-300",
-                      isEditorCollapsed ? "h-auto flex-shrink-0" : "flex-1 min-h-0"
-                    )}>
+                    "pt-2 transition-all duration-300",
+                    isEditorCollapsed ? "h-auto flex-shrink-0" : "flex-1 min-h-0"
+                  )}>
                     <MermaidEditor
                       code={mermaidCode}
                       onChange={handleMermaidCodeChange}
@@ -351,7 +357,7 @@ export default function Home() {
                       isCollapsed={isEditorCollapsed}
                       onToggleCollapse={() => setIsEditorCollapsed(!isEditorCollapsed)}
                       // 传递下钻回调
-                      onDrillDown={handleDrillDown} 
+                      onDrillDown={handleDrillDown}
                     />
                   </div>
                 </div>
@@ -363,42 +369,42 @@ export default function Home() {
               {/* Header */}
               <div className="h-12 flex justify-between items-center flex-shrink-0">
                 <div className="flex items-center gap-2 bg-muted p-1 rounded-lg">
-                   <Button 
-                      variant={renderMode === "mermaid" ? "secondary" : "ghost"}
-                      size="sm"
-                      onClick={() => setRenderMode("mermaid")}
-                      className="h-8 text-xs px-3"
-                   >
-                     Mermaid
-                   </Button>
-                   <Button 
-                      variant={renderMode === "excalidraw" ? "secondary" : "ghost"}
-                      size="sm"
-                      onClick={() => setRenderMode("excalidraw")}
-                      className="h-8 text-xs px-3"
-                   >
-                     Excalidraw
-                   </Button>
-                   <Button 
-                      variant={renderMode === "graph" ? "secondary" : "ghost"}
-                      size="sm"
-                      onClick={() => setRenderMode("graph")}
-                      className="h-8 text-xs px-3 gap-1"
-                      disabled={!useGraph || !useFileContext} 
-                      title={!useGraph || !useFileContext ? "需开启'依赖文件'和'RAG图谱'模式" : "查看知识图谱"}
-                   >
-                     <Network className="h-3 w-3" />
-                     知识图谱
-                   </Button>
+                  <Button
+                    variant={renderMode === "mermaid" ? "secondary" : "ghost"}
+                    size="sm"
+                    onClick={() => setRenderMode("mermaid")}
+                    className="h-8 text-xs px-3"
+                  >
+                    Mermaid
+                  </Button>
+                  <Button
+                    variant={renderMode === "excalidraw" ? "secondary" : "ghost"}
+                    size="sm"
+                    onClick={() => setRenderMode("excalidraw")}
+                    className="h-8 text-xs px-3"
+                  >
+                    Excalidraw
+                  </Button>
+                  <Button
+                    variant={renderMode === "graph" ? "secondary" : "ghost"}
+                    size="sm"
+                    onClick={() => setRenderMode("graph")}
+                    className="h-8 text-xs px-3 gap-1"
+                    disabled={!useGraph || !useFileContext}
+                    title={!useGraph || !useFileContext ? "需开启'依赖文件'和'RAG图谱'模式" : "查看知识图谱"}
+                  >
+                    <Network className="h-3 w-3" />
+                    知识图谱
+                  </Button>
                 </div>
-                
+
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    {renderMode === 'graph' && useGraph && useFileContext && (
-                        <span className="flex items-center animate-pulse">
-                            <span className="h-2 w-2 rounded-full bg-green-500 mr-2"></span>
-                            Live Sync
-                        </span>
-                    )}
+                  {renderMode === 'graph' && useGraph && useFileContext && (
+                    <span className="flex items-center animate-pulse">
+                      <span className="h-2 w-2 rounded-full bg-green-500 mr-2"></span>
+                      Live Sync
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -417,16 +423,16 @@ export default function Home() {
                   />
                 )}
                 {renderMode === "graph" && useGraph && useFileContext && (
-                  <KnowledgeGraphRenderer 
+                  <KnowledgeGraphRenderer
                     graphData={graphData}
                   />
                 )}
                 {renderMode === "graph" && (!useGraph || !useFileContext) && (
-                    <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-                        <Network className="h-12 w-12 mb-4 opacity-20" />
-                        <p>知识图谱可视化不可用</p>
-                        <p className="text-sm mt-2">请确保已开启“依赖文件”和“RAG图谱”模式</p>
-                    </div>
+                  <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+                    <Network className="h-12 w-12 mb-4 opacity-20" />
+                    <p>知识图谱可视化不可用</p>
+                    <p className="text-sm mt-2">请确保已开启“依赖文件”和“RAG图谱”模式</p>
+                  </div>
                 )}
               </div>
             </div>

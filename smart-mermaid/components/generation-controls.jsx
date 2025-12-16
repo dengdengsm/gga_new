@@ -1,7 +1,7 @@
 "use client"
 
 import React from 'react'
-import { Settings2, FileSearch, BrainCircuit } from 'lucide-react'
+import { Settings2, FileSearch, BrainCircuit, History, ShieldAlert } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
@@ -14,6 +14,11 @@ export function GenerationControls({
   setUseFileContext,
   useGraph,
   setUseGraph,
+  // 2. 接收新参数
+  useHistory,
+  setUseHistory,
+  useMistakes,
+  setUseMistakes,
   richness,
   setRichness
 }) {
@@ -80,11 +85,44 @@ export function GenerationControls({
                 className="scale-75 origin-right data-[state=checked]:bg-indigo-500" 
               />
             </div>
+
+            {/* 3. 新增：历史经验 (Router) */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <History className="h-3.5 w-3.5 text-muted-foreground" />
+                <Label htmlFor="history-mode-pop" className="text-xs font-medium cursor-pointer">
+                  参考历史经验 (Router)
+                </Label>
+              </div>
+              <Switch 
+                id="history-mode-pop" 
+                checked={useHistory} 
+                onCheckedChange={setUseHistory} 
+                className="scale-75 origin-right" 
+              />
+            </div>
+
+            {/* 4. 新增：错题修正 (Code Revise) */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <ShieldAlert className="h-3.5 w-3.5 text-muted-foreground" />
+                <Label htmlFor="mistakes-mode-pop" className="text-xs font-medium cursor-pointer">
+                  启用错题修正 (Revise)
+                </Label>
+              </div>
+              <Switch 
+                id="mistakes-mode-pop" 
+                checked={useMistakes} 
+                onCheckedChange={setUseMistakes} 
+                className="scale-75 origin-right" 
+              />
+            </div>
+
           </div>
 
           <div className="h-px bg-border" />
 
-          {/* 丰富度滑块 */}
+          {/* 丰富度滑块 (保持不变) */}
           <div className="space-y-3 pt-1">
             <div className="flex items-center justify-between">
               <Label className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">
