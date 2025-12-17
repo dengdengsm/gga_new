@@ -26,7 +26,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-// --- 预设风格定义 ---
+// --- 预设风格定义 (已添加 .graphviz-canvas 作用域前缀) ---
 const PRESETS = [
   {
     id: "default",
@@ -38,24 +38,27 @@ const PRESETS = [
     id: "hand-drawn",
     name: "手绘草图 (Hand Drawn)",
     css: `
-      svg { font-family: "Comic Sans MS", "Chalkboard SE", sans-serif !important; }
-      .node polygon, .node ellipse, .node path { 
+      .graphviz-canvas svg { font-family: "Comic Sans MS", "Chalkboard SE", "Comic Neue", cursive, sans-serif !important; }
+      .graphviz-canvas .node polygon, 
+      .graphviz-canvas .node ellipse, 
+      .graphviz-canvas .node path { 
+        stroke-width: 2.5px !important; 
+        fill: #ffffff !important; 
+        stroke: #2c3e50 !important; 
+        filter: url(#hand-drawn-filter); 
+        vector-effect: non-scaling-stroke;
+      }
+      .graphviz-canvas .edge path { 
+        stroke: #2c3e50 !important; 
         stroke-width: 2px !important; 
-        fill: #fff !important; 
-        stroke: #333 !important; 
         filter: url(#hand-drawn-filter); 
       }
-      .edge path { 
-        stroke: #333 !important; 
-        stroke-width: 2px !important; 
+      .graphviz-canvas .edge polygon { 
+        fill: #2c3e50 !important; 
+        stroke: #2c3e50 !important; 
         filter: url(#hand-drawn-filter); 
       }
-      .edge polygon { 
-        fill: #333 !important; 
-        stroke: #333 !important; 
-        filter: url(#hand-drawn-filter); 
-      }
-      text { font-weight: bold; fill: #333 !important; }
+      .graphviz-canvas text { font-weight: bold; fill: #2c3e50 !important; }
     `,
     svgDefs: `
       <filter id="hand-drawn-filter" x="-20%" y="-20%" width="140%" height="140%">
@@ -68,16 +71,31 @@ const PRESETS = [
     id: "blueprint",
     name: "工程蓝图 (Blueprint)",
     css: `
-      svg { background-color: #1a365d !important; font-family: "Courier New", monospace !important; }
-      .node polygon, .node ellipse { 
-        fill: #1a365d !important; 
-        stroke: #fff !important; 
-        stroke-dasharray: 5,2; 
-        stroke-width: 1.5px !important; 
+      .graphviz-canvas {
+        background-color: #1a365d !important; 
+        background-image: linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px),
+                          linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px);
+        background-size: 20px 20px;
       }
-      .edge path { stroke: #93c5fd !important; stroke-width: 1.5px !important; }
-      .edge polygon { fill: #93c5fd !important; stroke: #93c5fd !important; }
-      text { fill: #fff !important; }
+      .graphviz-canvas svg { 
+        font-family: "Courier New", "Roboto Mono", monospace !important; 
+        background: transparent !important;
+      }
+      .graphviz-canvas .node polygon, 
+      .graphviz-canvas .node ellipse, 
+      .graphviz-canvas .node path { 
+        fill: rgba(26, 54, 93, 0.8) !important; 
+        stroke: #e2e8f0 !important; 
+        stroke-width: 1.5px !important; 
+        stroke-dasharray: 0;
+      }
+      .graphviz-canvas .edge path { 
+        stroke: #93c5fd !important; 
+        stroke-width: 1.5px !important; 
+        stroke-dasharray: 4,2; 
+      }
+      .graphviz-canvas .edge polygon { fill: #93c5fd !important; stroke: #93c5fd !important; }
+      .graphviz-canvas text { fill: #f8fafc !important; font-weight: normal !important; text-shadow: none !important; }
     `,
     svgDefs: ""
   },
@@ -85,26 +103,63 @@ const PRESETS = [
     id: "neon",
     name: "赛博霓虹 (Cyberpunk)",
     css: `
-      svg { background-color: #050505 !important; font-family: "Orbitron", sans-serif !important; }
-      .node polygon, .node ellipse { 
-        fill: rgba(0, 255, 255, 0.1) !important; 
-        stroke: #0ff !important; 
+      .graphviz-canvas { background-color: #050505 !important; }
+      .graphviz-canvas svg { font-family: "Orbitron", "Exo 2", sans-serif !important; background: transparent !important; }
+      .graphviz-canvas .node polygon, 
+      .graphviz-canvas .node ellipse, 
+      .graphviz-canvas .node path { 
+        fill: rgba(0, 0, 0, 0.7) !important; 
+        stroke: #00ff9d !important; 
         stroke-width: 2px !important; 
         filter: url(#neon-glow); 
       }
-      .edge path { stroke: #f0f !important; stroke-width: 2px !important; filter: url(#neon-glow); }
-      .edge polygon { fill: #f0f !important; stroke: #f0f !important; }
-      text { fill: #fff !important; text-shadow: 0 0 5px #0ff; }
+      .graphviz-canvas .edge path { 
+        stroke: #ff00ff !important; 
+        stroke-width: 2px !important; 
+        filter: url(#neon-glow); 
+        opacity: 0.8;
+      }
+      .graphviz-canvas .edge polygon { fill: #ff00ff !important; stroke: #ff00ff !important; filter: url(#neon-glow); }
+      .graphviz-canvas text { fill: #ffffff !important; text-shadow: 0 0 8px #00ff9d; font-weight: bold; }
     `,
     svgDefs: `
       <filter id="neon-glow" x="-50%" y="-50%" width="200%" height="200%">
-        <feGaussianBlur stdDeviation="2.5" result="coloredBlur" />
+        <feGaussianBlur stdDeviation="2" result="coloredBlur" />
         <feMerge>
           <feMergeNode in="coloredBlur" />
           <feMergeNode in="SourceGraphic" />
         </feMerge>
       </filter>
     `
+  },
+  {
+    id: "glass",
+    name: "磨砂玻璃 (Glassmorphism)",
+    css: `
+      .graphviz-canvas { 
+        background: linear-gradient(135deg, #e0f2fe 0%, #f3e8ff 100%) !important;
+      }
+      .graphviz-canvas svg { 
+        font-family: "Inter", system-ui, sans-serif !important; 
+        background: transparent !important;
+      }
+      .graphviz-canvas .node polygon, 
+      .graphviz-canvas .node ellipse, 
+      .graphviz-canvas .node path { 
+        fill: rgba(255, 255, 255, 0.4) !important; 
+        stroke: rgba(255, 255, 255, 0.9) !important; 
+        stroke-width: 1.5px !important; 
+        filter: drop-shadow(0 4px 6px rgba(0,0,0,0.05));
+      }
+      .graphviz-canvas .edge path { 
+        stroke: #64748b !important; 
+        stroke-width: 1.5px !important; 
+        opacity: 0.6;
+      }
+      .graphviz-canvas .edge polygon { fill: #64748b !important; stroke: #64748b !important; opacity: 0.6; }
+      .graphviz-canvas text { fill: #1e293b !important; font-weight: 500; }
+    `,
+    svgDefs: ""
   }
 ];
 
@@ -150,7 +205,7 @@ export function GraphvizStyleManager({ onStyleChange }) {
 
       const newStyle = {
         id: `custom-${Date.now()}`,
-        name: prompt.slice(0, 15) + (prompt.length > 15 ? "..." : ""), // 简单的名字
+        name: prompt.slice(0, 15) + (prompt.length > 15 ? "..." : ""),
         css: result.css,
         svgDefs: result.svgDefs
       };
