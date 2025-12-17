@@ -73,40 +73,44 @@ class RouterAgent:
         # 3. 构造完整 System Prompt (原 router.md + 动态逻辑)
         # 包含了图表类型映射表和输出格式要求
         system_prompt = (
-            "You are an intelligent **Visualization Orchestrator**.\n"
-            "Your goal is to select the BEST Mermaid diagram type based on the user's request.\n\n"
-            
-            "### 1. Diagram Type Menu (Strict Mapping)\n"
-            "Select the filename strictly from this list. Do NOT invent new filenames.\n\n"
-            
-            "**Structure **:\n"
-            "- `flowchart.md`: Logic flows, algorithms, process steps. (Most Common)\n"
-            "- `architecture.md`: Cloud/System high-level architecture.\n"
-            "- `classDiagram.md`: OOP classes, data structures.\n"
-            "- `entityRelationshipDiagram.md`: Database schemas (ERD).\n"
-            "- `block.md`: Hardware layouts or simple block structures.\n\n"
-            
-            "**Behavior **:\n"
-            "- `sequenceDiagram.md`: Interaction between services/actors over time.\n"
-            "- `stateDiagram.md`: Lifecycle states, status transitions.\n"
-            "- `userJourney.md`: User workflow steps.\n\n"
-            
-            "**Project & Data **:\n"
-            "- `gantt.md`, `timeline.md`, `gitgraph.md`, `mindmap.md`\n"
-            "- `pie.md`, `xyChart.md`, `quadrantChart.md`\n\n"
-            f"{experience_section}\n"
-            "**You should analyze the content according to the user's requirement**\n"
-            "**You should contain as more details as you can in your output**\n"
-            "### 2. Output Format (JSON Only)\n"
-            "Output a SINGLE JSON object:\n"
-            "{\n"
-            "  \"reason\": \"Cite the specific RAG reference if used.\",\n"
-            "  \"target_prompt_file\": \"filename.md\",\n"
-            "  \"analysis_content\": \"Structured summary for the coder.\"\n"
-            "}\n\n"
-            
-            
-        )
+    "You are a **Visual Logic Architect**. Your goal is to Analyze the User Request and Context, Select the Best Diagram Type, and **Extract Structured Logic** for the code generator.\n\n"
+    
+    "### 1. Analysis Strategy\n"
+    "Step 1: Analyze the [User Content] to identify the core entities, relationships, and data flow.\n"
+    "Step 2: Match the data characteristics with the **Diagram Type Menu**.\n"
+    "Step 3: Extract **Critical Details** (Node names, edge labels, conditions, directions) into the `analysis_content`.\n\n"
+
+    "### 2. Diagram Type Menu & Data Characteristics\n"
+    "**Structure (Static Relationship)**:\n"
+    "- `flowchart.md`: Decisions, process steps, algorithms. (Keyword: Process, Workflow, Logic)\n"
+    "- `architecture.md`: System components, cloud infrastructure, container hierarchy. (Keyword: System, Layout, Stack)\n"
+    "- `classDiagram.md`: OOP classes, inheritance, interfaces, attributes. (Keyword: Class, Object, Data Model)\n"
+    "- `entityRelationshipDiagram.md`: Database schemas, PK/FK, cardinality. (Keyword: DB, Schema, Table)\n"
+    
+    "**Behavior (Dynamic Interaction)**:\n"
+    "- `sequenceDiagram.md`: Message exchange sequence, API calls, request/response. (Keyword: Interaction, Protocol, Flow)\n"
+    "- `stateDiagram.md`: Life-cycle states, state transitions, triggers. (Keyword: Status, State Machine, Lifecycle)\n"
+    "- `userJourney.md`: User steps, satisfaction levels, tasks. (Keyword: User Experience, Step)\n\n"
+    
+    "**Data & Plan**:\n"
+    "- `gantt.md`: Project schedules, dates, tasks. | `pie.md`: Proportions, percentages.\n\n"
+
+    f"{experience_section}\n"
+
+    "### 3. Critical Output Instruction for `analysis_content`\n"
+    "The `analysis_content` MUST be a **Mermaid-Ready Logic Description**, NOT a general summary.\n"
+    "- **If Flowchart**: List all nodes with clear IDs and text. Describe strictly: Node A -> Condition B -> Node C.\n"
+    "- **If Sequence**: List participants clearly. Describe order: A calls B (sync/async), B returns to A.\n"
+    "- **If Class/ER**: List Entity Names, Attributes (type/name), and specific relationships (1:N, inheritance).\n"
+    "- **Keep Technical Terms**: Do not translate variable names or API endpoints.\n\n"
+
+    "### 4. Output Format (JSON Only)\n"
+    "{\n"
+    "  \"reason\": \"Why you chose this diagram type (mention specific data features).\",\n"
+    "  \"target_prompt_file\": \"filename.md\",\n"
+    "  \"analysis_content\": \"Structured Logic Description...\"\n"
+    "}"
+)
         
         # 4. LLM 决策
         messages = [{"role": "user", "content": f"[User Requirement]:\n{user_target}\n\n[Context Content]:\n{user_content}"}]
@@ -131,48 +135,74 @@ class RouterAgent:
         
     def analyze_specific_mode(self, user_content: str, user_target: str, specific_type: str, use_experience:bool = False) -> Dict[str, Any]:
         """
-        【新增】定向分析模式：当用户明确指定图表类型时调用
-        跳过选型步骤，直接生成针对该图表的分析内容。
+        【定向分析模式 - 增强版】
+        支持 Graphviz (DOT) 及 Mermaid 的深度逻辑提取。
         """
-        print(f"⚡ Router 进入定向分析模式 -> 目标类型: {specific_type}\n")
+        print(f"⚡ Router 进入定向分析模式 -> 目标类型: {specific_type}")
+        
+        # 1. 经验检索 (保持原有逻辑，增强针对性)
         experience_section = ""
         if use_experience:
-            retrieved_experiences = self.rag.search_score(query=user_target, top_k=5)
-            
+            retrieved_experiences = self.rag.search_score(query=user_target, top_k=3)
             if retrieved_experiences:
-                print(f"   [RAG] 联想到 {len(retrieved_experiences)} 条相关设计思路")
-                experience_context = "\n### Reference Design Strategies (From Past Success):\n"
-                for idx, exp in enumerate(retrieved_experiences):
-                    experience_context += f"{idx+1}. {exp}\n"
-            else:
-                print("   [RAG] 无相关经验，使用通用策略。")
-            if retrieved_experiences:
-                # 如果有经验，就加一段“狠话”
-                experience_instruction = (
-                    "\n\n"
-                    "### 🧠 CRITICAL REFERENCE (RAG MEMORY)\n"
-                    "The following are **SUCCESSFUL PAST STRATEGIES** retrieved from your memory bank.\n"
-                    f"**INSTRUCTION**: You can learn only from the {specific_type} strategies, .\nOther type of diagram has little value to learn from.\n"
-                    "--------------------------------------------------\n"
+                print(f"   [RAG] 联想到 {len(retrieved_experiences)} 条相关经验")
+                context_list = "\n".join([f"{idx+1}. {exp}" for idx, exp in enumerate(retrieved_experiences)])
+                experience_section = (
+                    "\n\n### 🧠 REFERENCE MEMORY (Past Success)\n"
+                    f"Consider these successful patterns for {specific_type}:\n"
+                    f"{context_list}\n"
                 )
-                # 拼装：指令 + 具体的经验列表
-                experience_section = experience_instruction + experience_context
-                
-        # 2. 构造定向 Prompt
+
+        # 2. 构造文件名 (自动适配 graphviz)
+        # 如果前端传的是 'dot' 或 'graphviz'，统一映射到 graphviz.md
+        if specific_type.lower() in ['dot', 'graphviz']:
+            target_file = "graphviz.md"
+            type_instruction = (
+                "### SPECIAL INSTRUCTION FOR GRAPHVIZ (DOT)\n"
+                "You are preparing logic for a **Graphviz DOT** engine.\n"
+                "Focus on **Topology and Hierarchy** rather than just flow.\n"
+                "**Extraction Requirements**:\n"
+                "1. **Clusters/Subgraphs**: Group related nodes (e.g., 'subgraph cluster_A { ... }').\n"
+                "2. **Node Attributes**: Define shapes (box, ellipse, record) based on entity type.\n"
+                "3. **Relationships**: Define connections clearly (directed '->' or undirected '--').\n"
+                "4. **Layout**: Suggest 'rankdir' (TB, LR) based on the flow.\n"
+            )
+        else:
+            # Mermaid 通用逻辑
+            target_file = f"{specific_type}.md" if specific_type.endswith('.md') else f"{specific_type}.md"
+            type_instruction = (
+                f"### SPECIAL INSTRUCTION FOR {specific_type.upper()}\n"
+                "Focus on the strict syntax logic required for this specific Mermaid diagram type.\n"
+                "- If Sequence: Identify Participants and exact Order of messages.\n"
+                "- If Class/ER: Identify Entities, Attributes, and Cardinalities.\n"
+                "- If Flowchart: Identify Nodes, Decisions, and Edge labels.\n"
+            )
+
+        # 3. 构造增强版 System Prompt
         system_prompt = (
-            f"You are a Visualization Expert. The user has EXPLICITLY requested a '{specific_type}' diagram.\n"
-            f"### INSTRUCTIONS:\n"
-            f"1. Analyze the [User Content] and [User Requirement].\n"
-            f"2. Extract the key entities, relationships, or steps needed to build a high-quality {specific_type}.\n"
-            f"3. Do NOT suggest other diagram types.\n"
-            f"4. Output JSON strictly.\n\n"
-            f"{experience_section}"
-            f"### OUTPUT FORMAT (JSON):\n"
-            f"{{\n"
-            f"  \"reason\": \"User manually selected {specific_type}.\",\n"
-            f"  \"target_prompt_file\": \"{specific_type}.md\",\n"
-            f"  \"analysis_content\": \"...Structured analysis summary suitable for generating {specific_type} code...\"\n"
-            f"}}"
+            f"You are a **Specialized Visual Logic Architect**.\n"
+            f"The user has EXPLICITLY selected the tool: **'{specific_type}'**.\n"
+            f"Your task is NOT to choose a tool, but to **Extract Structured Logic** specifically optimized for it.\n\n"
+            
+            f"{type_instruction}\n\n"
+            
+            f"{experience_section}\n\n"
+
+            "### CRITICAL: Analysis Content Format\n"
+            "The 'analysis_content' you output MUST be a **Structured Blueprint** for the code generator.\n"
+            "Do NOT write paragraphs. Write logic steps or structural definitions.\n"
+            "**Example for Graphviz**:\n"
+            "- Layout: Left-to-Right (rankdir=LR)\n"
+            "- Cluster 'Database': Contains [UserDB, LogDB]\n"
+            "- Node 'App': shape=component\n"
+            "- Edge: App -> UserDB [label='read']\n\n"
+
+            "### OUTPUT FORMAT (JSON Only)\n"
+            "{\n"
+            f"  \"reason\": \"User manually selected {specific_type}. Analyzing for optimal structure.\",\n"
+            f"  \"target_prompt_file\": \"{target_file}\",\n"
+            f"  \"analysis_content\": \"...Your Structured Logic Blueprint here...\"\n"
+            "}"
         )
 
         messages = [{"role": "user", "content": f"[User Requirement]: {user_target}\n\n[Context Content]:\n{user_content}"}]
@@ -181,19 +211,18 @@ class RouterAgent:
             response_text = self.llm.chat(messages, system_prompt=system_prompt, json_mode=True)
             result = json.loads(response_text)
             
-            # 强制修正文件名，防止LLM幻觉
-            target_file = f"{specific_type}.md"
+            # 双重保险：强制覆盖文件名，防止模型幻觉改名
             result['target_prompt_file'] = target_file
             
             return result
         except Exception as e:
-            print(f"Router 定向分析失败: {e}，使用原始内容作为分析结果")
+            print(f"Router 定向分析失败: {e}，使用回退策略")
             return {
-                "target_prompt_file": f"{specific_type}.md",
+                "target_prompt_file": target_file,
                 "reason": "Fallback: Analysis Failed",
-                "analysis_content": f"Requirement: {user_target}\nContext: {user_content[:1500]}"
+                "analysis_content": f"User Requirement: {user_target}\n\nContext Data:\n{user_content[:2000]}"
             }
-
+                    
     def learn_from_success(self, user_query: str, valid_code: str):
         """
         【进化接口】当 App 确认代码生成成功后调用。
