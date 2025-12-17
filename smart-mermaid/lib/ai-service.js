@@ -13,6 +13,7 @@ const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
  * @param {function} onChunk - (已废弃，传 null)
  * @param {boolean} useGraph - 是否使用知识图谱模式
  * @param {boolean} useFileContext - 是否依赖已上传文件作为上下文
+ * @param {number} richness - 信息密度 (0.0 - 1.0)
  */
 export async function generateMermaidFromText(text, diagramType = "auto", onChunk = null, useGraph = true, useFileContext = true, richness = 0.5) {
   if (!text) {
@@ -156,6 +157,44 @@ export async function optimizeMermaidCode(mermaidCode, instruction = "", onChunk
       optimizedCode: "", 
       error: error.message || "优化请求出错" 
     };
+  }
+}
+
+/**
+ * [新增] 生成 Graphviz 样式代码 (CSS + SVG Defs)
+ * @param {string} description - 用户对风格的描述 (如 "赛博朋克风格")
+ * @returns {Promise<{css: string, svgDefs: string, error?: string}>}
+ */
+export async function generateGraphStyle(description) {
+  if (!description) return { error: "请输入风格描述" };
+
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/style/generate`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        description: description
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error("风格生成服务请求失败");
+    }
+
+    const resData = await response.json();
+    
+    if (resData.status === "error") {
+      return { error: resData.message };
+    }
+
+    // resData.data 应该包含 { css, svgDefs }
+    return resData.data;
+
+  } catch (error) {
+    console.error("Style Generation Error:", error);
+    return { error: error.message || "生成风格时发生错误" };
   }
 }
 

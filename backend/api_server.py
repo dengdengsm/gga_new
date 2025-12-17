@@ -22,6 +22,7 @@ from utils import quick_validate_mermaid, preprocess_multi_files
 from document_reader import DocumentAnalyzer
 from project_manager import ProjectManager
 from git_loader import GitHubLoader
+from style_agent import StyleAgent
 
 # --- 配置 ---
 PROJECTS_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.projects"))
@@ -55,6 +56,7 @@ try:
         model_name="deepseek-chat"
     )
     doc_analyzer = DocumentAnalyzer() 
+    style_agent = StyleAgent(model_name="deepseek-chat")
     print("✅ [Backend] 引擎加载完毕！")
 except Exception as e:
     print(f"❌ [Backend] 引擎加载失败: {e}")
@@ -133,6 +135,10 @@ class GitHubAnalysisRequest(BaseModel):
     diagramType: str = "auto"
     aiConfig: Optional[Dict[str, Any]] = None
     richness: float = 0.5
+
+class StyleGenRequest(BaseModel):
+    description: str
+
 # --- 3. Routes ---
 
 # === 项目管理接口 ===
@@ -868,6 +874,22 @@ async def get_models():
 @app.post("/api/verify-password")
 async def verify_password(req: PasswordRequest):
     return {"success": True, "message": "Access Granted"}
+
+@app.post("/api/style/generate")
+async def generate_graph_style(req: StyleGenRequest):
+    print(f"🎨 [Style] 收到样式生成请求: {req.description}")
+    try:
+        # 调用 StyleAgent
+        result = style_agent.generate_style(req.description)
+        
+        # 检查是否有错误
+        if result.get("error"):
+            return {"status": "error", "message": result["error"]}
+            
+        return {"status": "success", "data": result}
+    except Exception as e:
+        print(f"🔥 [Style] 生成失败: {e}")
+        return {"status": "error", "message": str(e)}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
