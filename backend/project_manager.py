@@ -78,3 +78,26 @@ class ProjectManager:
         records = [r for r in records if r.get("id") != file_id]
         with open(record_path, "w", encoding="utf-8") as f:
             json.dump(records, f, ensure_ascii=False, indent=2)
+
+    def update_file_info(self, file_id: str, updates: dict):
+        """
+        更新文件的元数据 (例如 last_graph_sync, status, message 等)
+        :param file_id: 文件ID
+        :param updates: 包含要更新字段的字典, 例如 {"last_graph_sync": 171890..., "status": "indexed"}
+        """
+        record_path = os.path.join(self.get_project_dir(), "files.json")
+        records = self.get_file_records()
+        updated = False
+        
+        for rec in records:
+            if rec.get("id") == file_id:
+                # 遍历字典，更新所有传入的字段
+                for key, value in updates.items():
+                    rec[key] = value
+                updated = True
+                break
+        
+        if updated:
+            with open(record_path, "w", encoding="utf-8") as f:
+                json.dump(records, f, ensure_ascii=False, indent=2)
+        return updated

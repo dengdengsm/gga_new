@@ -6,13 +6,20 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTa
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Callable
 import glob
 import re
 from datetime import datetime
 import time
 import uuid
+import logging
 
+# 关闭 httpx (OpenAI/DeepSeek 底层通讯库) 的 INFO 日志
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
+# 如果还有其他干扰，可以尝试关闭这些常见库的日志
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("openai").setLevel(logging.WARNING)
 # --- 引入你的核心模块 ---
 from router import RouterAgent
 from graphrag import LightGraphRAG
@@ -138,6 +145,230 @@ class GitHubAnalysisRequest(BaseModel):
 
 class StyleGenRequest(BaseModel):
     description: str
+
+
+# ==========================================
+# === 核心逻辑封装 (Refactored Helpers) ===
+# ==========================================
+
+def run_code_revision_loop(
+    initial_code: str, 
+    revise_agent: CodeReviseAgent,
+    user_query: Optional[str] = None,
+    router_agent_instance: Optional[RouterAgent] = None,
+    use_mistakes: bool = False,
+    status_callback: Optional[Callable[[str], None]] = None
+):
+    """
+    通用代码修复循环：校验 -> 失败 -> 记录 -> 修复 (最多3次)
+    :param initial_code: 初始生成的代码
+    :param revise_agent: 修复代理实例
+    :param user_query: 用户原始查询（用于成功后学习）
+    :param router_agent_instance: 路由代理实例（用于成功后学习）
+    :param use_mistakes: 是否使用错误本辅助修复
+    :param status_callback: 可选的回调函数，用于更新外部状态（如 GitHub 任务消息）
+    :return: (final_code, final_error)
+    """
+    current_code = initial_code
+    max_retries = 3 
+    attempt_history = []
+    validation = {'valid': False, 'error': 'Not started'}
+
+    print(f"   -> 正在校验代码语法 (最大重试 {max_retries} 次)...")
+
+    for i in range(max_retries + 1):
+        print(f"   🔍 [第 {i+1} 次校验] ...")
+        validation = quick_validate_mermaid(current_code)
+        
+        if validation['valid']:
+            print("   ✅ 校验通过")
+            
+            # 1. 记录经验 (如果是在修复过程中成功的)
+            if i > 0 and len(attempt_history) > 0 and revise_agent:
+                try:
+                    last_fail = attempt_history[-1]
+                    revise_agent.record_mistake(last_fail["code"], last_fail["error"], current_code)
+                    print("   📚 错误修复经验已录入")
+                except Exception as e:
+                    print(f"   ⚠️ 经验录入失败: {e}")
+            
+            # 2. Router 学习 (如果提供了 agent 和 query)
+            try: 
+                if router_agent_instance and user_query: 
+                    router_agent_instance.learn_from_success(user_query, current_code)
+            except: pass
+            
+            break 
+        
+        else:
+            error_msg = validation['error']
+            print(f"   ❌ 校验失败: {error_msg[:50]}...")
+            
+            if i == max_retries:
+                print("   ❌ 达到最大重试次数，放弃自动修复")
+                break
+            
+            attempt_history.append({"code": current_code, "error": error_msg})
+            
+            if revise_agent:
+                msg = f"正在自动修复语法错误 ({i+1}/{max_retries})..."
+                print(f"   🔧 {msg}")
+                if status_callback:
+                    status_callback(msg)
+
+                current_code = revise_agent.revise_code(
+                    current_code, 
+                    error_message=error_msg, 
+                    previous_attempts=attempt_history,
+                    use_mistake_book=use_mistakes
+                )
+            else:
+                print("   ⚠️ CodeReviseAgent 未加载，无法进行修复")
+                break
+    
+    final_error = validation['error'] if not validation['valid'] else None
+    return current_code, final_error
+
+# ==========================================
+# === 简单的文件状态管理 (基于项目目录) ===
+# ==========================================
+
+
+def build_file_context(user_query: str, use_graph: bool, use_file: bool) -> str:
+    """
+    构建上下文：基于 ProjectManager 的统一状态管理
+    """
+    context = ""
+    
+    # 1. 获取项目路径和文件记录
+    project_dir = project_manager.get_project_dir() 
+    upload_dir = os.path.join(project_dir, "uploads")
+    
+    # 获取“唯一真理”：ProjectManager 里的记录
+    file_records = project_manager.get_file_records() 
+    # 建立 filename -> record 的映射，方便后续查找
+    record_map = {rec['filename']: rec for rec in file_records}
+    
+    # 扫描实际存在的物理文件
+    _, text_files, blob_files = preprocess_multi_files(upload_dir, project_dir)
+    all_current_files = text_files + blob_files
+    
+    if use_file and len(all_current_files) > 0:
+        if use_graph:
+            print(f"   -> 🔵 Mode: GraphRAG (Project: {project_manager.current_project})")
+            
+            # 3. 找出需要更新到图谱的文件
+            files_to_update = []
+            
+            for fpath in all_current_files:
+                fname = os.path.basename(fpath)
+                current_mtime = os.path.getmtime(fpath) # 物理文件的最后修改时间
+                
+                record = record_map.get(fname)
+                
+                # 判断逻辑：
+                # 1. 如果 ProjectManager 里没记录（可能是手动复制进去的），暂不处理或强制更新
+                # 2. 如果记录里没有 'last_graph_sync' 字段（说明上传了但从未构建过图谱）-> 需要更新
+                # 3. 如果物理文件比记录的时间新（说明文件被修改过）-> 需要更新
+                
+                needs_update = False
+                if not record:
+                    # 这种情况理论上不应发生，除非手动操作了文件夹
+                    print(f"   ⚠️ Warning: File {fname} found on disk but not in ProjectManager.")
+                    continue 
+                
+                last_sync = record.get("last_graph_sync", 0) # 默认为 0
+                
+                if current_mtime > last_sync:
+                    needs_update = True
+                
+                if needs_update:
+                    files_to_update.append((fpath, record))
+
+            # 4. 如果有变动，执行增量构建
+            if files_to_update:
+                print(f"   -> 发现 {len(files_to_update)} 个文件需要同步到图谱...")
+                graph_input_path = os.path.join(upload_dir, "graph_full_context.md")
+                new_content_buffer = ""
+                
+                for fpath, record in files_to_update:
+                    fname = os.path.basename(fpath)
+                    try:
+                        # --- 读取内容 ---
+                        if fpath in text_files:
+                            with open(fpath, 'r', encoding='utf-8') as f:
+                                content = f.read()
+                            new_content_buffer += f"\n\n### File: {fname}\n{content}\n"
+                        else:
+                            blob_desc = doc_analyzer.analyze(
+                                fpath, 
+                                prompt="请详细描述该文件的内容，以便构建准确的知识图谱。", 
+                                max_token_limit=2400
+                            )
+                            new_content_buffer += f"\n\n### File: {fname}\nContent Description:\n{blob_desc}\n"
+                        
+                        # --- 关键修改：更新 ProjectManager 记录 ---
+                        # 记录当前时间戳，并标记状态为 "indexed" (已索引)
+                        project_manager.update_file_info(
+                            record["id"], 
+                            {
+                                "last_graph_sync": os.path.getmtime(fpath),
+                                "status": "indexed", # 或者保持 "success"
+                                "message": "已同步至知识库"
+                            }
+                        )
+                        
+                    except Exception as e:
+                        print(f"      ❌ 处理失败 {fname}: {e}")
+                        project_manager.update_file_info(
+                            record["id"], 
+                            {"status": "error", "message": f"图谱构建失败: {str(e)}"}
+                        )
+
+                # 写入 Graph md 并触发构建
+                if new_content_buffer:
+                    with open(graph_input_path, "a", encoding="utf-8") as f:
+                        f.write(new_content_buffer)
+                    
+                    rag_engine.build_graph(graph_input_path)
+            else:
+                print("   -> ✨ 图谱已是最新，无需重建。")
+
+            # 搜索图谱
+            print("   -> Searching Knowledge Graph...")
+            context = rag_engine.search(user_query, top_k=3)
+
+        # --- 分支 B: 直接多文件模式 (No Graph) ---
+        else:
+            print("   -> 🟠 Mode: Direct Analysis (All Files)")
+            
+            all_targets = text_files + blob_files
+            count = len(all_targets)
+            token_budget = 1200
+            limit_per_file = max(100, token_budget // count) if count > 0 else 1200
+            
+            file_contexts = []
+            print(f"   -> Processing {count} files (Limit: ~{limit_per_file} tokens/file)...")
+            
+            for fpath in all_targets:
+                try:
+                    analysis = doc_analyzer.analyze(
+                        fpath, 
+                        prompt=f"Briefly explain this file's relevance to: {user_query}", 
+                        max_token_limit=limit_per_file
+                    )
+                    print("文档提取成功......")
+                    file_contexts.append(f"### File: {os.path.basename(fpath)}\nSummary:\n{analysis}\n")
+                except Exception as e:
+                    print(f"Error analyzing {fpath}: {e}")
+            
+            context = "\n".join(file_contexts)
+    
+    else:
+        print("   -> ⚪ Mode: Pure Text (No File Context)")
+        context = "" 
+
+    return context
 
 # --- 3. Routes ---
 
@@ -347,119 +578,23 @@ async def get_task_status(task_id: str):
 @app.post("/api/generate-mermaid")
 async def generate_mermaid(request: GenerateRequest):
     user_query = request.text
-    use_graph = request.useGraph
-    diagram_type = request.diagramType
-    use_file = request.useFileContext
-    
-    print(f"\n⚡ [Generate] 收到请求: {user_query[:50]}... | Graph: {use_graph} | File: {use_file}")
+    print(f"\n⚡ [Generate] 收到请求: {user_query[:50]}... | Graph: {request.useGraph} | File: {request.useFileContext}")
 
     try:
-        context = ""
-        project_dir = project_manager.get_project_dir()
-        upload_dir = os.path.join(project_dir, "uploads")
-        
-        # 1. 预处理文件：自动分类与合并
-        # merged_md: 文本类文件的合并内容路径 (用于 GraphRAG)
-        # text_files: 文本文件列表 (用于 No-Graph 直接读取)
-        # blob_files: 非文本文件列表 (用于 DocumentAnalyzer)
-        merged_md, text_files, blob_files = preprocess_multi_files(upload_dir, project_dir)
-        total_files_count = len(text_files) + len(blob_files)
-
-        if use_file and total_files_count > 0:
-            
-            # --- 分支 A: 知识图谱模式 (GraphRAG) ---
-            if use_graph:
-                print("   -> 🔵 Mode: GraphRAG (Full Context Integration)")
-                
-                # 1. 准备图谱构建的完整语料 (文本文件 + 非文本文件的AI描述)
-                full_corpus_content = ""
-                
-                # A. 读取现有的合并文本 (来自 text_files)
-                if merged_md and os.path.exists(merged_md):
-                    with open(merged_md, "r", encoding="utf-8") as f:
-                        full_corpus_content += f.read() + "\n\n"
-                
-                # B. 处理非文本文件 (Blob) -> 转为文本描述
-                # 逻辑要求：每个非文本文件生成 1200 token 的详细说明
-                if blob_files:
-                    print(f"   -> [GraphPrep] 正在将 {len(blob_files)} 个非文本文件转化为图谱语料...")
-                    for bf in blob_files:
-                        try:
-                            # 视作文本文件处理：生成长描述
-                            blob_desc = doc_analyzer.analyze(
-                                bf, 
-                                prompt="请详细描述该文件的内容，以便构建准确的知识图谱。", 
-                                max_token_limit=1200
-                            )
-                            full_corpus_content += f"### File: {os.path.basename(bf)}\nContent Description:\n{blob_desc}\n\n"
-                        except Exception as e:
-                            print(f"   ❌ Error processing blob {bf} for graph: {e}")
-                
-                # C. 保存为临时构建文件并构建图谱
-                # 将所有内容整合后，再次直接调用 Build_graph
-                graph_input_path = os.path.join(upload_dir, "graph_full_context.md")
-                with open(graph_input_path, "w", encoding="utf-8") as f:
-                    f.write(full_corpus_content)
-                
-                try:
-                    print(f"   -> Building Graph from integrated corpus: {os.path.basename(graph_input_path)}")
-                    rag_engine.build_graph(graph_input_path)
-                    print("   ✅ Graph Build/Update Complete")
-                except Exception as build_e:
-                    print(f"   ❌ Graph Build Failed: {build_e}")
-                
-                # D. 搜索图谱获取上下文 (Router 使用的内容)
-                print("   -> Searching Knowledge Graph...")
-                context = rag_engine.search(user_query, top_k=3)
-
-            # --- 分支 B: 直接多文件模式 (No Graph) ---
-            else:
-                print("   -> 🟠 Mode: Direct Analysis (All Files)")
-                
-                # 逻辑要求：调用 document-reader 处理所有文件 (含文本文件)
-                # 约束：总字数 (Total Token Budget) 1200
-                
-                all_targets = text_files + blob_files
-                count = len(all_targets)
-                token_budget = 1200
-                # 动态分配每个文件的配额，最少给100，防止文件过多时分配为0
-                limit_per_file = max(100, token_budget // count) if count > 0 else 1200
-                
-                file_contexts = []
-                print(f"   -> Processing {count} files (Limit: ~{limit_per_file} tokens/file)...")
-                
-                for fpath in all_targets:
-                    try:
-                        # 统一使用 analyzer 生成摘要，文本文件也能处理
-                        analysis = doc_analyzer.analyze(
-                            fpath, 
-                            prompt=f"Briefly explain this file's relevance to: {user_query}", 
-                            max_token_limit=limit_per_file
-                        )
-                        print("文档提取成功......")
-                        file_contexts.append(f"### File: {os.path.basename(fpath)}\nSummary:\n{analysis}\n")
-                    except Exception as e:
-                        print(f"Error analyzing {fpath}: {e}")
-                
-                context = "\n".join(file_contexts)
-        
-        else:
-            print("   -> ⚪ Mode: Pure Text (No File Context)")
-            context = "" # 仅使用用户 Query
+        # 1. 调用封装好的上下文构建函数
+        context = build_file_context(user_query, request.useGraph, request.useFileContext)
 
         # 2. Router 调度中心
         print("   -> Router 正在制定策略...")
         
-        if diagram_type == "auto":
-            # 自动选型模式
-            route_res = router_agent.route_and_analyze(user_content=context, user_target=user_query,use_experience=request.useHistory)
+        if request.diagramType == "auto":
+            route_res = router_agent.route_and_analyze(user_content=context, user_target=user_query, use_experience=request.useHistory)
         else:
-            # 定向生成模式
-            print(f"   -> 用户强制指定类型: {diagram_type}")
+            print(f"   -> 用户强制指定类型: {request.diagramType}")
             route_res = router_agent.analyze_specific_mode(
                 user_content=context, 
                 user_target=user_query, 
-                specific_type=diagram_type,
+                specific_type=request.diagramType,
                 use_experience=request.useHistory
             )
             
@@ -470,60 +605,16 @@ async def generate_mermaid(request: GenerateRequest):
         
         # 3. 代码生成
         print("   -> 正在生成代码...")
-        initial_code = code_gen_agent.generate_code(logic_analysis, prompt_file=prompt_file,richness=request.richness)
+        initial_code = code_gen_agent.generate_code(logic_analysis, prompt_file=prompt_file, richness=request.richness)
         
-        # 4. 循环修复逻辑 (保持不变)
-        current_code = initial_code
-        max_retries = 3 
-        attempt_history = []
-        validation = {'valid': False, 'error': 'Not started'}
-
-        print(f"   -> 正在校验代码语法 (最大重试 {max_retries} 次)...")
-
-        for i in range(max_retries + 1):
-            print(f"   🔍 [第 {i+1} 次校验] ...")
-            validation = quick_validate_mermaid(current_code)
-            
-            if validation['valid']:
-                print("   ✅ 校验通过")
-                
-                if i > 0 and len(attempt_history) > 0 and code_revise_agent:
-                    try:
-                        last_fail = attempt_history[-1]
-                        code_revise_agent.record_mistake(last_fail["code"], last_fail["error"], current_code)
-                        print("   📚 错误修复经验已录入")
-                    except Exception as e:
-                        print(f"   ⚠️ 经验录入失败: {e}")
-                
-                try: 
-                    if router_agent: router_agent.learn_from_success(user_query, current_code)
-                except: pass
-                
-                break 
-            
-            else:
-                error_msg = validation['error']
-                print(f"   ❌ 校验失败: {error_msg[:50]}...")
-                
-                if i == max_retries:
-                    break
-                
-                attempt_history.append({"code": current_code, "error": error_msg})
-                
-                if code_revise_agent:
-                    print(f"   🔧 启动自动修复 (第 {i+1} 次尝试)...")
-                    current_code = code_revise_agent.revise_code(
-                        current_code, 
-                        error_message=error_msg, 
-                        previous_attempts=attempt_history,
-                        use_mistake_book=request.useMistakes
-                    )
-                else:
-                    print("   ⚠️ CodeReviseAgent 未加载，无法进行修复")
-                    break
-        
-        final_code = current_code
-        final_error = validation['error'] if not validation['valid'] else None
+        # 4. 调用封装好的循环修复逻辑
+        final_code, final_error = run_code_revision_loop(
+            initial_code=initial_code,
+            revise_agent=code_revise_agent,
+            user_query=user_query,
+            router_agent_instance=router_agent,
+            use_mistakes=request.useMistakes
+        )
 
         return {"mermaidCode": final_code, "error": final_error}
 
@@ -535,7 +626,6 @@ async def generate_mermaid(request: GenerateRequest):
 
 # === GitHub 分析接口 ===
 
-# === 在 tasks 变量定义之后，或其他函数定义附近添加这个后台处理函数 ===
 def process_github_background(task_id: str, repo_url: str, diagram_type: str, richness: float):
     """GitHub 分析的后台任务逻辑"""
     try:
@@ -580,7 +670,7 @@ def process_github_background(task_id: str, repo_url: str, diagram_type: str, ri
             except Exception as e:
                 print(f"      ❌ Skipped {os.path.basename(file_path)}: {e}")
             
-        # 5. 组装 Context (这是给 AI 看的最终内容)
+        # 5. 组装 Context
         full_context = (
             f"# GitHub Repository Analysis: {repo_name}\n\n"
             f"> Source URL: {repo_url}\n"
@@ -593,41 +683,31 @@ def process_github_background(task_id: str, repo_url: str, diagram_type: str, ri
             f"Total files scanned: {len(source_files)}. Files fully analyzed: {len(selected_files)}.\n"
         )
         
-        # ==========================================
-        # === [新增] 保存分析结果为 Context 文件 ===
-        # ==========================================
-        
-        # 命名为 "仓库名.md"
+        # 保存分析结果
         summary_filename = f"{repo_name}.md"
         summary_file_path = os.path.join(upload_dir, summary_filename)
-        
-        # 写入文件
         with open(summary_file_path, "w", encoding="utf-8") as f:
             f.write(full_context)
-            
         print(f"   💾 [Save] Context saved to: {summary_filename}")
 
-        # 添加到文件列表 (这样 generate_mermaid 扫描 uploads 时会自动带上它，前端也能看见)
         try:
             summary_record = {
                 "id": str(uuid.uuid4()),
-                "filename": summary_filename, # 前端显示 "smart-mermaid.md"
+                "filename": summary_filename, 
                 "status": "success",
                 "message": "GitHub 智能分析报告",
                 "timestamp": datetime.now().isoformat(),
                 "location": summary_file_path,
                 "size": len(full_context),
-                "isGithubAnalysis": True # 标记这是分析报告
+                "isGithubAnalysis": True
             }
             project_manager.add_file_record(summary_record)
         except Exception as e:
             print(f"   ⚠️ Failed to register summary file: {e}")
 
-        # ==========================================
-        
         user_query = f"Analyze the architecture of the GitHub repository '{repo_name}'. Use the Directory Tree to understand the full scope, and the Core File Analysis to understand the specific logic implementation."
         
-        # 6. 生成图表 (逻辑保持不变)
+        # 6. 生成图表
         tasks[task_id].update({"message": "AI 正在构建图表逻辑..."})
         
         if diagram_type == "auto":
@@ -645,39 +725,27 @@ def process_github_background(task_id: str, repo_url: str, diagram_type: str, ri
         tasks[task_id].update({"message": "正在生成 Mermaid 代码..."})
         initial_code = code_gen_agent.generate_code(logic_analysis, prompt_file=prompt_file, richness=richness)
         
-        # Code Revise
-        current_code = initial_code
-        max_retries = 3 
-        validation = {'valid': False, 'error': 'Not started'}
+        # 7. Code Revise (使用封装函数，带状态更新回调)
+        def update_status(msg):
+            tasks[task_id].update({"message": msg})
 
-        for i in range(max_retries + 1):
-            validation = quick_validate_mermaid(current_code)
-            if validation['valid']:
-                break
-            
-            error_msg = validation['error']
-            if i < max_retries:
-                tasks[task_id].update({"message": f"正在自动修复语法错误 ({i+1}/{max_retries})..."})
-                history = [{"code": current_code, "error": error_msg}]
-                current_code = code_revise_agent.revise_code(
-                    current_code, 
-                    error_message=error_msg, 
-                    previous_attempts=history
-                )
-
-        final_error = validation['error'] if not validation['valid'] else None
+        final_code, final_error = run_code_revision_loop(
+            initial_code=initial_code,
+            revise_agent=code_revise_agent,
+            user_query=None, # GitHub 任务暂不触发 Router 学习
+            status_callback=update_status
+        )
         
-        # 保存历史记录 (History)
+        # 保存历史记录
         try:
             hist_entry = {
                 "id": str(int(time.time() * 1000)),
                 "query": f"GitHub Analysis: {repo_name}",
-                "code": current_code,
+                "code": final_code,
                 "diagramType": diagram_type,
                 "timestamp": datetime.now().isoformat(),
                 "analysisSummary": logic_analysis
             }
-            
             p_dir = project_manager.get_project_dir()
             hist_file = os.path.join(p_dir, "history.json")
             
@@ -693,42 +761,32 @@ def process_github_background(task_id: str, repo_url: str, diagram_type: str, ri
         except Exception as e:
             print(f"   ⚠️ Failed to save history: {e}")
 
-        # 7. 任务完成
+        # 8. 任务完成
         print(f"✅ [Task {task_id}] GitHub 分析完成")
         tasks[task_id] = {
             "status": "success",
             "message": "分析完成",
             "result": {  
-                "mermaidCode": current_code,
+                "mermaidCode": final_code,
                 "error": final_error,
                 "analysisSummary": logic_analysis
             }
         }
-        
-        # 注意：这里我们不再向 ProjectManager 注册 "raw repo" 的文件记录，
-        # 只注册了上面的 summary_record。这样前端只会显示 "repo.md"，
-        # 且 generate_mermaid 只会扫描到 "repo.md"，完美符合“包含总结但不包含源码”的需求。
 
     except Exception as e:
         print(f"❌ [Task {task_id}] Failed: {e}")
         tasks[task_id] = {"status": "error", "message": str(e)}
-# === 修改后的接口 ===
 
 @app.post("/api/upload-github")
 async def analyze_github(request: GitHubAnalysisRequest, background_tasks: BackgroundTasks):
-    # 生成任务 ID
     task_id = str(uuid.uuid4())
     print(f"\n⚡ [GitHub] 收到请求，创建后台任务 ID: {task_id}")
-    
-    # 初始化任务状态
     tasks[task_id] = {
         "status": "pending",
         "message": "任务初始化...",
         "type": "github",
         "repo": request.repoUrl
     }
-    
-    # 启动后台任务
     background_tasks.add_task(
         process_github_background,
         task_id,
@@ -736,8 +794,6 @@ async def analyze_github(request: GitHubAnalysisRequest, background_tasks: Backg
         request.diagramType,
         request.richness
     )
-    
-    # 立即返回 ID，不等待处理
     return {"status": "success", "taskId": task_id, "message": "后台分析已启动"}
 
 @app.post("/api/optimize-mermaid")
@@ -745,52 +801,18 @@ async def optimize_mermaid(request: OptimizeRequest):
     print(f"\n⚡ [Optimize] 收到优化请求: {request.instruction[:50]}...")
     
     try:
-        # 2. 第一步：执行优化 (不查 RAG，纯 LLM 修改)
-        # 这对应你要求的“调用llm进行优化，这个过程不检索任何rag”
+        # 第一步：执行优化
         current_code = code_revise_agent.optimize_code(request.code, request.instruction)
         
-        # 3. 第二步：进入标准的“校验+自动修复”循环 (复用 generate_mermaid 的逻辑)
-        # 这对应你要求的“再用和generate_mermaid同一套的revise逻辑”
-        
-        max_retries = 3
-        attempt_history = []
-        validation = {'valid': False, 'error': 'Not started'}
-        
-        print(f"   -> 正在校验优化后的代码 (最大重试 {max_retries} 次)...")
-
-        for i in range(max_retries + 1):
-            validation = quick_validate_mermaid(current_code)
-            
-            if validation['valid']:
-                print(f"   ✅ [第 {i+1} 次] 校验通过")
-                # 如果是在修复过程中成功的，记录经验
-                if i > 0 and len(attempt_history) > 0:
-                    try:
-                        last_fail = attempt_history[-1]
-                        code_revise_agent.record_mistake(last_fail["code"], last_fail["error"], current_code)
-                    except: pass
-                break
-            else:
-                error_msg = validation['error']
-                print(f"   ❌ [第 {i+1} 次] 校验失败: {error_msg[:50]}...")
-                
-                if i == max_retries:
-                    break
-                
-                attempt_history.append({"code": current_code, "error": error_msg})
-                
-                # 调用带 RAG 的修复功能
-                print(f"   🔧 启动自动修复...")
-                current_code = code_revise_agent.revise_code(
-                    current_code, 
-                    error_message=error_msg, 
-                    previous_attempts=attempt_history
-                )
-
-        final_error = validation['error'] if not validation['valid'] else None
+        # 第二步：调用封装的校验+修复逻辑
+        final_code, final_error = run_code_revision_loop(
+            initial_code=current_code,
+            revise_agent=code_revise_agent,
+            use_mistakes=False # 优化通常不查错误本，而是基于指令
+        )
         
         return {
-            "optimizedCode": current_code, 
+            "optimizedCode": final_code, 
             "error": final_error
         }
 
@@ -800,66 +822,13 @@ async def optimize_mermaid(request: OptimizeRequest):
 
 @app.post("/api/fix-mermaid")
 async def fix_mermaid(request: FixRequest):
-    
-     # === 循环修复逻辑开始 ===
-        current_code = request.mermaidCode
-        max_retries = 3  # 最大重试次数
-        attempt_history = []
-        validation = {'valid': False, 'error': 'Not started'}
-
-        print(f"   -> 正在校验代码语法 (最大重试 {max_retries} 次)...")
-
-        for i in range(max_retries + 1):
-            print(f"   🔍 [第 {i+1} 次校验] ...")
-            validation = quick_validate_mermaid(current_code)
-            
-            if validation['valid']:
-                print("   ✅ 校验通过")
-                
-                # 如果经历过修复，记录经验 (Mistake Learning)
-                if i > 0 and len(attempt_history) > 0 and code_revise_agent:
-                    try:
-                        last_fail = attempt_history[-1]
-                        code_revise_agent.record_mistake(last_fail["code"], last_fail["error"], current_code)
-                        print("   📚 错误修复经验已录入")
-                    except Exception as e:
-                        print(f"   ⚠️ 经验录入失败: {e}")
-                
-                
-                break # 成功，跳出循环
-            
-            else:
-                # 校验失败
-                error_msg = validation['error']
-                print(f"   ❌ 校验失败: {error_msg[:50]}...")
-                
-                if i == max_retries:
-                    print("   ❌ 达到最大重试次数，放弃自动修复")
-                    break
-                
-                # 记录失败历史，供下次修复参考
-                attempt_history.append({
-                    "code": current_code,
-                    "error": error_msg
-                })
-                
-                if code_revise_agent:
-                    print(f"   🔧 启动自动修复 (第 {i+1} 次尝试)...")
-                    # 关键：传入 previous_attempts 历史记录
-                    current_code = code_revise_agent.revise_code(
-                        current_code, 
-                        error_message=error_msg, 
-                        previous_attempts=attempt_history
-                    )
-                else:
-                    print("   ⚠️ CodeReviseAgent 未加载，无法进行修复")
-                    break
-        
-        final_code = current_code
-        # 如果最后还是 invalid，保留错误信息传给前端
-        final_error = validation['error'] if not validation['valid'] else None
-
-        return {"fixedCode": final_code, "error": final_error}
+    # 调用封装的循环修复逻辑
+    final_code, final_error = run_code_revision_loop(
+        initial_code=request.mermaidCode,
+        revise_agent=code_revise_agent,
+        use_mistakes=True # 纯修复模式建议开启错误本学习
+    )
+    return {"fixedCode": final_code, "error": final_error}
 
 @app.get("/api/models")
 async def get_models():
