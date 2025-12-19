@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata = {
-  title: "智能文本转 Mermaid 图表",
-  description: "利用 AI 技术将文本内容智能转换为 Mermaid 格式的可视化图表",
+  title: "GGA-图表生成智能体",
+  description: "利用AI技术生成您想要的图表",
 };
 
 export default function RootLayout({ children }) {

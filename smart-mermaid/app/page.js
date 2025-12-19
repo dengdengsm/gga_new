@@ -4,7 +4,8 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { Wand2, Network, GitGraph } from "lucide-react"; // 引入 GitGraph 图标作为 Graphviz 的临时图标
+// [修改] 引入 Database 图标
+import { Wand2, Network, GitGraph, Database } from "lucide-react"; 
 import { Header } from "@/components/header";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { TextInput } from "@/components/text-input";
@@ -12,7 +13,7 @@ import { FileUpload } from "@/components/file-upload";
 import { DiagramTypeSelector } from "@/components/diagram-type-selector";
 import { MermaidEditor } from "@/components/mermaid-editor";
 import { MermaidRenderer } from "@/components/mermaid-renderer";
-import { GraphvizRenderer } from "@/components/graphviz-renderer"; // [新增] 引入 Graphviz 渲染器
+import { GraphvizRenderer } from "@/components/graphviz-renderer"; 
 import { GenerationControls } from "@/components/generation-controls";
 import { generateMermaidFromText } from "@/lib/ai-service";
 import { isWithinCharLimit, cn } from "@/lib/utils";
@@ -33,6 +34,9 @@ export default function Home() {
   const [showSettingsDialog, setShowSettingsDialog] = useState(false);
   const [passwordVerified, setPasswordVerified] = useState(false);
   const [hasCustomConfig, setHasCustomConfig] = useState(false);
+
+  // [新增] 图谱构建请求状态
+  const [isGraphBuilding, setIsGraphBuilding] = useState(false);
 
   // --- 生成策略状态 ---
   const [useGraph, setUseGraph] = useState(false);
@@ -156,6 +160,29 @@ export default function Home() {
     setHasError(hasErr);
   };
 
+  // [新增] 触发后台构建图谱的函数
+  const handleBuildGraph = async () => {
+    if (isGraphBuilding) return;
+    
+    setIsGraphBuilding(true);
+    try {
+      const res = await fetch(`${API_URL}/api/graph/build`, { method: 'POST' });
+      
+      if (res.ok) {
+        toast.success("已触发后台知识图谱更新任务");
+      } else {
+        toast.error("请求失败，无法启动构建任务");
+      }
+    } catch (e) {
+      console.error(e);
+      toast.error("网络请求错误");
+    } finally {
+      // 这里的 timeout 主要是为了防止用户频繁连点，以及给一个视觉反馈时间
+      // 实际任务在后台异步执行
+      setTimeout(() => setIsGraphBuilding(false), 2000);
+    }
+  };
+
   const handleGenerateClick = async (overrideText = null) => {
     const textToUse = (typeof overrideText === 'string') ? overrideText : inputText;
 
@@ -196,8 +223,6 @@ export default function Home() {
       setMermaidCode(generatedCode);
       
       // [新增] 智能视图切换
-      // 如果明确是 Graphviz 类型，切到 Graphviz 视图
-      // 如果当前在 Graphviz 视图但生成了 Mermaid (且不是 auto)，切回 Mermaid
       if (diagramType === 'graphviz') {
         setRenderMode('graphviz');
       } else if (renderMode === 'graphviz' && diagramType !== 'auto') {
@@ -325,7 +350,24 @@ export default function Home() {
                     </TabsContent>
                   </div>
 
+                  {/* [修改] 按钮区域布局调整：包含更新图谱和生成图表 */}
                   <div className="h-16 flex items-center gap-2 flex-shrink-0 pt-2">
+                    
+                    {/* [新增] 独立的构建图谱按钮 */}
+                    <Button
+                      variant="outline"
+                      onClick={handleBuildGraph}
+                      // 只有在启用了文件上下文时，构建图谱才有意义
+                      disabled={isGraphBuilding || !useFileContext} 
+                      className="h-10 w-12 px-0 md:w-auto md:px-4 flex-shrink-0"
+                      title="手动触发知识图谱的增量构建/更新"
+                    >
+                      <Database className={cn("h-4 w-4 md:mr-2", isGraphBuilding && "animate-pulse")} />
+                      <span className="hidden md:inline">
+                        {isGraphBuilding ? "提交中..." : "更新图谱"}
+                      </span>
+                    </Button>
+
                     <Button
                       onClick={() => handleGenerateClick()}
                       disabled={isGenerating || !inputText.trim() || !isWithinCharLimit(inputText, maxChars)}
@@ -334,7 +376,7 @@ export default function Home() {
                       {isGenerating ? (
                         <>
                           <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-background mr-2"></div>
-                          {useFileContext ? (useGraph ? "检索图谱并生成..." : "读取文档并生成...") : "仅根据文本生成..."}
+                          生成中...
                         </>
                       ) : (
                         <>

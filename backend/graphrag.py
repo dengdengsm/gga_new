@@ -1021,31 +1021,30 @@ class LightGraphRAG:
     def get_graph_snapshot(self):
         """获取图谱快照 (带 Debug 打印)"""
         try:
-            # 🔒 加锁读取，防止报错
-            with self.lock:
-                current_ver = self.graph_version
-                node_count = self.graph.number_of_nodes()
-                edge_count = self.graph.number_of_edges()
-                
-                nodes = []
-                for n, attr in self.graph.nodes(data=True):
-                    degree = self.graph.degree(n)
-                    size = 5 + (degree * 0.5) if degree else 5
-                    nodes.append({
-                        "id": str(n),
-                        "label": str(n),
-                        "color": "#4F8BF9",
-                        "val": size,
-                        "title": attr.get("description", "") 
-                    })
-                
-                links = []
-                for u, v, data in self.graph.edges(data=True):
-                    links.append({
-                        "source": str(u), 
-                        "target": str(v), 
-                        "label": data.get("description", "") # 修复字段名
-                    })
+
+            current_ver = self.graph_version
+            node_count = self.graph.number_of_nodes()
+            edge_count = self.graph.number_of_edges()
+            
+            nodes = []
+            for n, attr in self.graph.nodes(data=True):
+                degree = self.graph.degree(n)
+                size = 5 + (degree * 0.5) if degree else 5
+                nodes.append({
+                    "id": str(n),
+                    "label": str(n),
+                    "color": "#4F8BF9",
+                    "val": size,
+                    "title": attr.get("description", "") 
+                })
+            
+            links = []
+            for u, v, data in self.graph.edges(data=True):
+                links.append({
+                    "source": str(u), 
+                    "target": str(v), 
+                    "label": data.get("description", "") # 修复字段名
+                })
 
             # 🛠️ [DEBUG] 打印一下，看看前端到底有没有来拿数据
             print(f"📡 [Snapshot] Frontend requested. Ver: {current_ver} | Nodes: {node_count}")

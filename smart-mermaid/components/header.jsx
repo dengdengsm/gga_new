@@ -134,7 +134,7 @@ export function Header({
         <div className="flex items-center gap-2">
           <FileCode2 className="h-6 w-6 text-primary" />
           <div className="hidden md:flex flex-col leading-none">
-            <span className="text-lg font-bold">Smart Mermaid</span>
+            <span className="text-lg font-bold">Graph Generate Agent</span>
             <span className="text-[10px] text-muted-foreground font-mono">PROJECT EDITION</span>
           </div>
         </div>

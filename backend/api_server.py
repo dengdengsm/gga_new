@@ -233,112 +233,133 @@ def run_code_revision_loop(
 # === 简单的文件状态管理 (基于项目目录) ===
 # ==========================================
 
+def background_build_graph(task_id: str):
+    """
+    后台任务：独立扫描文件变动并构建/更新知识图谱
+    """
+    try:
+        # 更新任务状态
+        tasks[task_id] = {"status": "processing", "message": "正在扫描文件变动..."}
+        print(f"🔄 [Graph Build] 任务 {task_id} 开始执行...")
+        
+        # 1. 获取项目路径和文件记录
+        project_dir = project_manager.get_project_dir() 
+        upload_dir = os.path.join(project_dir, "uploads")
+        
+        # 获取“唯一真理”：ProjectManager 里的记录
+        file_records = project_manager.get_file_records() 
+        record_map = {rec['filename']: rec for rec in file_records}
+        
+        # 扫描实际存在的物理文件
+        _, text_files, blob_files = preprocess_multi_files(upload_dir, project_dir)
+        all_current_files = text_files + blob_files
+        
+        # 2. 找出需要更新到图谱的文件
+        files_to_update = []
+        
+        for fpath in all_current_files:
+            fname = os.path.basename(fpath)
+            current_mtime = os.path.getmtime(fpath) # 物理文件的最后修改时间
+            
+            record = record_map.get(fname)
+            
+            if not record:
+                continue 
+            
+            # 判断逻辑：如果物理文件比记录的最后同步时间新，或者从未同步过
+            last_sync = record.get("last_graph_sync", 0)
+            
+            if current_mtime > last_sync:
+                files_to_update.append((fpath, record))
+
+        # 3. 如果有变动，执行增量构建
+        if files_to_update:
+            msg = f"发现 {len(files_to_update)} 个文件变动，正在更新图谱..."
+            print(f"   -> {msg}")
+            tasks[task_id]["message"] = msg
+            
+            graph_input_path = os.path.join(upload_dir, "graph_full_context.md")
+            new_content_buffer = ""
+            
+            for i, (fpath, record) in enumerate(files_to_update):
+                fname = os.path.basename(fpath)
+                # 更新细粒度进度
+                tasks[task_id]["message"] = f"正在解析 ({i+1}/{len(files_to_update)}): {fname}"
+                
+                try:
+                    # --- 读取内容 ---
+                    if fpath in text_files:
+                        with open(fpath, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                        new_content_buffer += f"\n\n### File: {fname}\n{content}\n"
+                    else:
+                        # Blob 文件调用 Vision 模型分析
+                        blob_desc = doc_analyzer.analyze(
+                            fpath, 
+                            prompt="请详细描述该文件的内容，以便构建准确的知识图谱。", 
+                            max_token_limit=2400
+                        )
+                        new_content_buffer += f"\n\n### File: {fname}\nContent Description:\n{blob_desc}\n"
+                    
+                    # --- 更新记录状态 ---
+                    project_manager.update_file_info(
+                        record["id"], 
+                        {
+                            "last_graph_sync": os.path.getmtime(fpath),
+                            "status": "indexed", 
+                            "message": "已同步至知识库"
+                        }
+                    )
+                    
+                except Exception as e:
+                    print(f"      ❌ 解析失败 {fname}: {e}")
+                    project_manager.update_file_info(
+                        record["id"], 
+                        {"status": "error", "message": f"图谱解析失败: {str(e)}"}
+                    )
+
+            # 写入 Graph md 并触发构建
+            if new_content_buffer:
+                tasks[task_id]["message"] = "正在构建图谱索引 (Embedding)..."
+                with open(graph_input_path, "a", encoding="utf-8") as f:
+                    f.write(new_content_buffer)
+                
+                # 调用 GraphRAG 引擎构建
+                rag_engine.build_graph(graph_input_path)
+                print("   ✅ 图谱构建完成")
+        else:
+            print("   ✨ 图谱已是最新，无需重建。")
+
+        # 任务完成
+        tasks[task_id] = {"status": "success", "message": "知识图谱已更新完毕"}
+
+    except Exception as e:
+        print(f"🔥 [Graph Build] 失败: {e}")
+        tasks[task_id] = {"status": "error", "message": str(e)}
 
 def build_file_context(user_query: str, use_graph: bool, use_file: bool) -> str:
     """
-    构建上下文：基于 ProjectManager 的统一状态管理
+    构建上下文：只读模式。
+    Graph 模式直接查库，不再触发构建；File 模式实时读取。
     """
     context = ""
     
-    # 1. 获取项目路径和文件记录
+    # 获取项目基本信息
     project_dir = project_manager.get_project_dir() 
     upload_dir = os.path.join(project_dir, "uploads")
-    
-    # 获取“唯一真理”：ProjectManager 里的记录
-    file_records = project_manager.get_file_records() 
-    # 建立 filename -> record 的映射，方便后续查找
-    record_map = {rec['filename']: rec for rec in file_records}
-    
-    # 扫描实际存在的物理文件
     _, text_files, blob_files = preprocess_multi_files(upload_dir, project_dir)
     all_current_files = text_files + blob_files
     
     if use_file and len(all_current_files) > 0:
+        # --- 分支 A: GraphRAG 模式 (只检索) ---
         if use_graph:
-            print(f"   -> 🔵 Mode: GraphRAG (Project: {project_manager.current_project})")
-            
-            # 3. 找出需要更新到图谱的文件
-            files_to_update = []
-            
-            for fpath in all_current_files:
-                fname = os.path.basename(fpath)
-                current_mtime = os.path.getmtime(fpath) # 物理文件的最后修改时间
-                
-                record = record_map.get(fname)
-                
-                # 判断逻辑：
-                # 1. 如果 ProjectManager 里没记录（可能是手动复制进去的），暂不处理或强制更新
-                # 2. 如果记录里没有 'last_graph_sync' 字段（说明上传了但从未构建过图谱）-> 需要更新
-                # 3. 如果物理文件比记录的时间新（说明文件被修改过）-> 需要更新
-                
-                needs_update = False
-                if not record:
-                    # 这种情况理论上不应发生，除非手动操作了文件夹
-                    print(f"   ⚠️ Warning: File {fname} found on disk but not in ProjectManager.")
-                    continue 
-                
-                last_sync = record.get("last_graph_sync", 0) # 默认为 0
-                
-                if current_mtime > last_sync:
-                    needs_update = True
-                
-                if needs_update:
-                    files_to_update.append((fpath, record))
-
-            # 4. 如果有变动，执行增量构建
-            if files_to_update:
-                print(f"   -> 发现 {len(files_to_update)} 个文件需要同步到图谱...")
-                graph_input_path = os.path.join(upload_dir, "graph_full_context.md")
-                new_content_buffer = ""
-                
-                for fpath, record in files_to_update:
-                    fname = os.path.basename(fpath)
-                    try:
-                        # --- 读取内容 ---
-                        if fpath in text_files:
-                            with open(fpath, 'r', encoding='utf-8') as f:
-                                content = f.read()
-                            new_content_buffer += f"\n\n### File: {fname}\n{content}\n"
-                        else:
-                            blob_desc = doc_analyzer.analyze(
-                                fpath, 
-                                prompt="请详细描述该文件的内容，以便构建准确的知识图谱。", 
-                                max_token_limit=2400
-                            )
-                            new_content_buffer += f"\n\n### File: {fname}\nContent Description:\n{blob_desc}\n"
-                        
-                        # --- 关键修改：更新 ProjectManager 记录 ---
-                        # 记录当前时间戳，并标记状态为 "indexed" (已索引)
-                        project_manager.update_file_info(
-                            record["id"], 
-                            {
-                                "last_graph_sync": os.path.getmtime(fpath),
-                                "status": "indexed", # 或者保持 "success"
-                                "message": "已同步至知识库"
-                            }
-                        )
-                        
-                    except Exception as e:
-                        print(f"      ❌ 处理失败 {fname}: {e}")
-                        project_manager.update_file_info(
-                            record["id"], 
-                            {"status": "error", "message": f"图谱构建失败: {str(e)}"}
-                        )
-
-                # 写入 Graph md 并触发构建
-                if new_content_buffer:
-                    with open(graph_input_path, "a", encoding="utf-8") as f:
-                        f.write(new_content_buffer)
-                    
-                    rag_engine.build_graph(graph_input_path)
-            else:
-                print("   -> ✨ 图谱已是最新，无需重建。")
-
-            # 搜索图谱
+            print(f"   -> 🔵 Mode: GraphRAG Search (Project: {project_manager.current_project})")
+            # 直接搜索，不再包含构建逻辑
+            # 注意：如果用户上传了新文件但没点“构建图谱”，这里搜不到新内容，这是符合预期的行为
             print("   -> Searching Knowledge Graph...")
             context = rag_engine.search(user_query, top_k=3)
 
-        # --- 分支 B: 直接多文件模式 (No Graph) ---
+        # --- 分支 B: 直接多文件模式 (保持原样) ---
         else:
             print("   -> 🟠 Mode: Direct Analysis (All Files)")
             
@@ -357,7 +378,6 @@ def build_file_context(user_query: str, use_graph: bool, use_file: bool) -> str:
                         prompt=f"Briefly explain this file's relevance to: {user_query}", 
                         max_token_limit=limit_per_file
                     )
-                    print("文档提取成功......")
                     file_contexts.append(f"### File: {os.path.basename(fpath)}\nSummary:\n{analysis}\n")
                 except Exception as e:
                     print(f"Error analyzing {fpath}: {e}")
@@ -391,6 +411,30 @@ async def create_project(req: ProjectCreateRequest):
     
     project_manager.ensure_project_exists(req.name)
     return {"status": "success", "message": f"项目 {req.name} 已创建"}
+
+@app.post("/api/graph/build")
+async def trigger_build_graph(background_tasks: BackgroundTasks):
+    """
+    触发后台知识图谱构建任务
+    """
+    task_id = str(uuid.uuid4())
+    print(f"🚀 [API] 收到手动构建图谱请求，Task ID: {task_id}")
+    
+    # 初始化任务状态
+    tasks[task_id] = {
+        "status": "pending",
+        "message": "正在启动构建任务...",
+        "timestamp": time.time()
+    }
+    
+    # 添加到后台队列
+    background_tasks.add_task(background_build_graph, task_id)
+    
+    return {
+        "status": "success", 
+        "message": "图谱构建任务已在后台启动",
+        "taskId": task_id
+    }
 
 @app.post("/api/projects/switch")
 async def switch_project(req: ProjectSwitchRequest):

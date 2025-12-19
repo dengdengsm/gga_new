@@ -102,5 +102,21 @@
   {
     "q": "Parse error on style attribute with quotes",
     "a": "Do not use quotes around style values in class definitions; list them as comma-separated items without quotes."
+  },
+  {
+    "q": "Parse error expecting specific keywords, got 'PS'",
+    "a": "Ensure all keywords and identifiers in the graph syntax match the expected set; avoid using undefined or unsupported terms."
+  },
+  {
+    "q": "trouble in init_rank",
+    "a": "Avoid using orthogonal splines with complex node arrangements or edge labels that may cause ranking conflicts; consider using straight or curved splines instead."
+  },
+  {
+    "q": "syntax error near identifier",
+    "a": "Avoid using spaces or special characters in node or edge identifiers; use underscores or camelCase instead."
+  },
+  {
+    "q": "syntax error near backslash in fontname",
+    "a": "Do not use backslashes or escape sequences in attribute values; use plain strings without special characters."
   }
 ]
